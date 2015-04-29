@@ -49,7 +49,7 @@ class Component( object ):
                     and self.count == 0:
                 self.count += 1
             else:
-                main.log.error( str(error.__class__) + " " + str(error) )
+                main.log.error( self.name + ": " + str(error.__class__) + " " + str(error) )
             try:
                 def experimentHandling( *args, **kwargs ):
                     if main.EXPERIMENTAL_MODE == main.TRUE:

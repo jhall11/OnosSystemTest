@@ -1,0 +1,30 @@
+<TOPOLOGY>
+    <COMPONENT>
+        <FakeSwitch1>
+            <host>127.0.0.1</host>
+            <user>test</user>
+            <password>onos_test</password>
+            <type>FakeSwitchDriver</type>
+            <COMPONENTS>
+            <controllerIP>192.168.1.20</controllerIP>
+            <controllerPort>6633</controllerPort>
+            </COMPONENTS>
+        </FakeSwitch1>   
+        <Controller1>
+            <host>192.168.1.19</host>
+            <user>test</user>
+            <password>onos_test</password>
+            <type>OnosDriver</type>
+            <COMPONENTS>
+            </COMPONENTS>
+        </Controller1>
+        <ControllerCli1>
+            <host>192.168.1.19</host>
+            <user>sdn</user>
+            <password>rocks</password>
+            <type>OnosCliDriver</type>
+            <COMPONENTS>
+            </COMPONENTS>
+        </ControllerCli1>
+    </COMPONENT>
+</TOPOLOGY>
