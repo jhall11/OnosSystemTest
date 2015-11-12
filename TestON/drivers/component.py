@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import logging
 """
 Created on 24-Oct-2012
 
@@ -23,6 +22,8 @@ author:s: Anil Kumar ( anilkumar.s@paxterrasolutions.com ),
 
 
 """
+import logging
+
 
 class Component( object ):
 
@@ -45,9 +46,8 @@ class Component( object ):
             return getattr( self.wrapped, name )
         except AttributeError as error:
             # NOTE: The first time we load a driver module we get this error
-            if "'module' object has no attribute '__path__'" in error\
-                    and self.count == 0:
-                self.count += 1
+            if "'module' object has no attribute '__path__'" in error:
+                pass
             else:
                 main.log.error( self.name + ": " + str(error.__class__) + " " + str(error) )
             try:

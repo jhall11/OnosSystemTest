@@ -16,13 +16,12 @@ shreya@onlab.us
 OCT 13 2014
 
 """
-import sys
 import pexpect
 import re
 import json
 import types
 import time
-sys.path.append( "../" )
+import os
 from drivers.common.clidriver import CLI
 
 
@@ -52,7 +51,28 @@ class OnosCliDriver( CLI ):
             if self.home is None or self.home == "":
                 self.home = "~/onos"
 
+            for key in self.options:
+                if key == 'onosIp':
+                    self.onosIp = self.options[ 'onosIp' ]
+                    break
+
             self.name = self.options[ 'name' ]
+
+            try:
+                if os.getenv( str( self.ip_address ) ) != None:
+                    self.ip_address = os.getenv( str( self.ip_address ) )
+                else:
+                    main.log.info( self.name +
+                                   ": Trying to connect to " +
+                                   self.ip_address )
+
+            except KeyError:
+                main.log.info( "Invalid host name," +
+                               " connecting to local host instead" )
+                self.ip_address = 'localhost'
+            except Exception as inst:
+                main.log.error( "Uncaught exception: " + str( inst ) )
+
             self.handle = super( OnosCliDriver, self ).connect(
                 user_name=self.user_name,
                 ip_address=self.ip_address,
@@ -188,7 +208,8 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def startOnosCli( self, ONOSIp, karafTimeout="" ):
+    def startOnosCli( self, ONOSIp, karafTimeout="",
+            commandlineTimeout=10, onosStartTimeout=60 ):
         """
         karafTimeout is an optional argument. karafTimeout value passed
         by user would be used to set the current karaf shell idle timeout.
@@ -206,7 +227,7 @@ class OnosCliDriver( CLI ):
         try:
             self.handle.sendline( "" )
             x = self.handle.expect( [
-                "\$", "onos>" ], timeout=10 )
+                "\$", "onos>" ], commandlineTimeout)
 
             if x == 1:
                 main.log.info( "ONOS cli is already running" )
@@ -216,7 +237,7 @@ class OnosCliDriver( CLI ):
             self.handle.sendline( "onos -w " + str( ONOSIp ) )
             i = self.handle.expect( [
                 "onos>",
-                pexpect.TIMEOUT ], timeout=60 )
+                pexpect.TIMEOUT ], onosStartTimeout )
 
             if i == 0:
                 main.log.info( str( ONOSIp ) + " CLI Started successfully" )
@@ -280,15 +301,26 @@ class OnosCliDriver( CLI ):
                 lvlStr = "--level=" + level
 
             self.handle.sendline( "" )
-            self.handle.expect( "onos>" )
+            i = self.handle.expect( [ "onos>","\$", pexpect.TIMEOUT ] )
+            if i == 1:
+                main.log.error( self.name + ": onos cli session closed." )
+                main.cleanup()
+                main.exit()
+            if i == 2:
+                self.handle.sendline( "" )
+                self.handle.expect( "onos>" )
             self.handle.sendline( "log:log " + lvlStr + " " + cmdStr )
+            self.handle.expect( "log:log" )
             self.handle.expect( "onos>" )
 
             response = self.handle.before
             if re.search( "Error", response ):
                 return main.FALSE
             return main.TRUE
-
+        except pexpect.TIMEOUT:
+            main.log.exception( self.name + ": TIMEOUT exception found" )
+            main.cleanup()
+            main.exit()
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":    " + self.handle.before )
@@ -327,34 +359,35 @@ class OnosCliDriver( CLI ):
             main.log.info( "Command '" + str( cmdStr ) + "' sent to "
                            + self.name + "." )
             if debug:
-                main.log.debug( "Raw output" )
-                main.log.debug( repr( response ) )
+                main.log.debug( self.name + ": Raw output" )
+                main.log.debug( self.name + ": " + repr( response ) )
 
             # Remove ANSI color control strings from output
             ansiEscape = re.compile( r'\x1b[^m]*m' )
             response = ansiEscape.sub( '', response )
             if debug:
-                main.log.debug( "ansiEscape output" )
-                main.log.debug( repr( response ) )
+                main.log.debug( self.name + ": ansiEscape output" )
+                main.log.debug( self.name + ": " + repr( response ) )
 
             # Remove extra return chars that get added
             response = re.sub(  r"\s\r", "", response )
             if debug:
-                main.log.debug( "Removed extra returns from output" )
-                main.log.debug( repr( response ) )
+                main.log.debug( self.name + ": Removed extra returns " +
+                                "from output" )
+                main.log.debug( self.name + ": " + repr( response ) )
 
             # Strip excess whitespace
             response = response.strip()
             if debug:
-                main.log.debug( "parsed and stripped output" )
-                main.log.debug( repr( response ) )
+                main.log.debug( self.name + ": parsed and stripped output" )
+                main.log.debug( self.name + ": " + repr( response ) )
 
             # parse for just the output, remove the cmd from response
             output = response.split( cmdStr.strip(), 1 )
             if debug:
-                main.log.debug( "split output" )
+                main.log.debug( self.name + ": split output" )
                 for r in output:
-                    main.log.debug( repr( r ) )
+                    main.log.debug( self.name + ": " + repr( r ) )
             return output[1].strip()
         except IndexError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -471,7 +504,7 @@ class OnosCliDriver( CLI ):
     def topology( self ):
         """
         Definition:
-            Returns the ouput of topology command.
+            Returns the output of topology command.
         Return:
             topology = current ONOS topology
         """
@@ -631,6 +664,70 @@ class OnosCliDriver( CLI ):
                 return main.FALSE
             else:
                 return main.TRUE
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def checkMasters( self,jsonFormat=True  ):
+        """
+            Returns the output of the masters command.
+            Optional argument:
+                * jsonFormat - boolean indicating if you want output in json
+        """
+        try:
+            cmdStr = "onos:masters"
+            if jsonFormat:
+                cmdStr += " -j"
+            output = self.sendline( cmdStr )
+            return output
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def checkBalanceMasters( self,jsonFormat=True ):
+        """
+            Uses the master command to check that the devices' leadership
+            is evenly divided
+
+            Dependencies: checkMasters() and summary()
+
+            Returns main.True if the devices are balanced
+            Returns main.False if the devices are unbalanced
+            Exits on Exception
+            Returns None on TypeError
+        """
+        try:
+            totalDevices = json.loads( self.summary() )[ "devices" ]
+            totalOwnedDevices = 0
+            masters = json.loads( self.checkMasters() )
+            first = masters[ 0 ][ "size" ]
+            for master in masters:
+                totalOwnedDevices += master[ "size" ]
+                if master[ "size" ] > first + 1 or master[ "size" ] < first - 1:
+                    main.log.error( "Mastership not balanced" )
+                    main.log.info( "\n" + self.checkMasters( False ) )
+                    return main.FALSE
+            main.log.info( "Mastership balanced between " \
+                            + str( len(masters) ) + " masters" )
+            return main.TRUE
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1611,6 +1708,31 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
+    def purgeWithdrawnIntents( self ):
+        """
+        Purges all WITHDRAWN Intents
+        """
+        try:
+            cmdStr = "purge-intents"
+            handle = self.sendline( cmdStr )
+            if re.search( "Error", handle ):
+                main.log.error( "Error in purging intents" )
+                return main.FALSE
+            else:
+                return main.TRUE
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
     def routes( self, jsonFormat=False ):
         """
         NOTE: This method should be used after installing application:
@@ -1639,19 +1761,19 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def intents( self, jsonFormat=True ):
+    def ipv4RouteNumber( self ):
         """
-        Optional:
-            * jsonFormat: enable output formatting in json
+        NOTE: This method should be used after installing application:
+              onos-app-sdnip
         Description:
-            Obtain intents currently installed
+            Obtain the total IPv4 routes number in the system
         """
         try:
-            cmdStr = "intents"
-            if jsonFormat:
-                cmdStr += " -j"
+            cmdStr = "routes -s -j"
             handle = self.sendline( cmdStr )
-            return handle
+            jsonResult = json.loads( handle )
+            return jsonResult['totalRoutes4']
+
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1664,6 +1786,53 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
+
+    def intents( self, jsonFormat = True, summary = False, **intentargs):
+        """
+        Optional:
+            * jsonFormat: enable output formatting in json
+            * summary: whether only output the intent summary
+            * type: only output a certain type of intent
+              This options is valid only when jsonFormat is true and summary is
+              true
+        Description:
+            Obtain intents
+        """
+        try:
+            cmdStr = "intents"
+            if summary:
+                cmdStr += " -s"
+            if jsonFormat:
+                cmdStr += " -j"
+            handle = self.sendline( cmdStr )
+            args = utilities.parse_args( [ "TYPE" ], **intentargs )
+            if "TYPE" in args.keys():
+                type = args[ "TYPE" ]
+            else:
+                type = ""
+            if jsonFormat and summary and ( type != "" ):
+                jsonResult = json.loads( handle )
+                if type in jsonResult.keys():
+                    return jsonResult[ type ]
+                else:
+                    main.log.error( "unknown TYPE, return all types of intents" )
+                    return handle
+            else:
+                return handle
+
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
 
     def getIntentState(self, intentsId, intentsJson=None):
         """
@@ -1723,40 +1892,61 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
-    
-    def checkIntentState( self, intentsId, expectedState = 'INSTALLED' ):
+
+    def checkIntentState( self, intentsId, expectedState='INSTALLED' ):
         """
         Description:
             Check intents state
         Required:
             intentsId - List of intents ID to be checked
         Optional:
-            expectedState - Check this expected state of each intents state
-                            in the list. Defaults to INSTALLED
+            expectedState - Check the expected state(s) of each intents
+                            state in the list.
+                            *NOTE: You can pass in a list of expected state,
+                            Eg: expectedState = [ 'INSTALLED' , 'INSTALLING' ]
         Return:
-            Returns main.TRUE only if all intent are the same as expectedState,
-            , otherwise,returns main.FALSE.
+            Returns main.TRUE only if all intent are the same as expected states
+            , otherwise, returns main.FALSE.
         """
         try:
             # Generating a dictionary: intent id as a key and state as value
+            returnValue = main.TRUE
             intentsDict = self.getIntentState( intentsId )
-            print "len of intentsDict ", str( len( intentsDict ) )
+
+            #print "len of intentsDict ", str( len( intentsDict ) )
             if len( intentsId ) != len( intentsDict ):
                 main.log.info( self.name + "There is something wrong " +
                                "getting intents state" )
                 return main.FALSE
-            returnValue = main.TRUE
-            for intents in intentsDict:
-                if intents.get( 'state' ) != expectedState:
-                    main.log.info( self.name + " : " + intents.get( 'id' ) +
-                                   " actual state = " + intents.get( 'state' )
-                                   + " does not equal expected state = "
-                                   + expectedState )
-                    returnValue = main.FALSE
+
+            if isinstance( expectedState, types.StringType ):
+                for intents in intentsDict:
+                    if intents.get( 'state' ) != expectedState:
+                        main.log.debug( self.name + " : Intent ID - " +
+                                        intents.get( 'id' ) +
+                                        " actual state = " +
+                                        intents.get( 'state' )
+                                        + " does not equal expected state = "
+                                        + expectedState )
+                        returnValue = main.FALSE
+
+            elif isinstance( expectedState, types.ListType ):
+                for intents in intentsDict:
+                    if not any( state == intents.get( 'state' ) for state in
+                                expectedState ):
+                        main.log.debug( self.name + " : Intent ID - " +
+                                        intents.get( 'id' ) +
+                                        " actual state = " +
+                                        intents.get( 'state' ) +
+                                        " does not equal expected states = "
+                                        + str( expectedState ) )
+                        returnValue = main.FALSE
+
             if returnValue == main.TRUE:
                 main.log.info( self.name + ": All " +
                                str( len( intentsDict ) ) +
-                               " intents are in " + expectedState + " state")
+                               " intents are in " + str( expectedState ) +
+                               " state" )
             return returnValue
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -1784,7 +1974,7 @@ class OnosCliDriver( CLI ):
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
             if re.search( "Error:", handle ):
-                main.log.error( self.name + ".flows() response: " +
+                main.log.error( self.name + ": flows() response: " +
                                 str( handle ) )
             return handle
         except TypeError:
@@ -1800,27 +1990,45 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def checkFlowsState( self ):
+    def checkFlowsState( self, isPENDING_ADD = True ):
         """
         Description:
             Check the if all the current flows are in ADDED state or
             PENDING_ADD state
+        Optional:
+            * isPENDING_ADD: whether the PENDING_ADD is also a correct status
         Return:
             returnValue - Returns main.TRUE only if all flows are in
-                          ADDED state or PENDING_ADD, return main.FALSE
-                          otherwise.
+                          ADDED state or PENDING_ADD if the PENDING_ADD
+                          parameter is set true, return main.FALSE otherwise.
         """
         try:
             tempFlows = json.loads( self.flows() )
+            #print tempFlows[0]
             returnValue = main.TRUE
-            for device in tempFlows:
-                for flow in device.get( 'flows' ):
-                    if flow.get( 'state' ) != 'ADDED' and flow.get( 'state' ) != \
-                            'PENDING_ADD':
-                        main.log.info( self.name + ": flow Id: " +
-                                       flow.get( 'flowId' ) +
-                                       " | state:" + flow.get( 'state' ) )
-                        returnValue = main.FALSE
+
+            if isPENDING_ADD:
+                for device in tempFlows:
+                    for flow in device.get( 'flows' ):
+                        if flow.get( 'state' ) != 'ADDED' and \
+                            flow.get( 'state' ) != 'PENDING_ADD':
+
+                            main.log.info( self.name + ": flow Id: " +
+                                           str( flow.get( 'groupId' ) ) +
+                                           " | state:" +
+                                           str( flow.get( 'state' ) ) )
+                            returnValue = main.FALSE
+            else:
+                for device in tempFlows:
+                    for flow in device.get( 'flows' ):
+                        if flow.get( 'state' ) != 'ADDED':
+
+                            main.log.info( self.name + ": flow Id: " +
+                                           str( flow.get( 'groupId' ) ) +
+                                           " | state:" +
+                                           str( flow.get( 'state' ) ) )
+                            returnValue = main.FALSE
+
             return returnValue
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -2167,7 +2375,7 @@ class OnosCliDriver( CLI ):
             elif logLevel == "warn":
                 main.log.warn( output )
             else:
-                main.log.info( output )
+                main.log.info( self.name + ": " + output )
             return result
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -2285,8 +2493,8 @@ class OnosCliDriver( CLI ):
                 # TODO: Should this be main.ERROR?
                 return main.FALSE
             else:
-                main.log.error( "Error in election_test_leader: " +
-                                "unexpected response" )
+                main.log.error( "Error in electionTestLeader on " + self.name +
+                                ": " + "unexpected response" )
                 main.log.error( repr( response ) )
                 return main.FALSE
         except TypeError:
@@ -2326,8 +2534,8 @@ class OnosCliDriver( CLI ):
                 main.log.error( "Election app is not loaded on " + self.name )
                 return main.FALSE
             else:
-                main.log.error( "Error in election_test_run: " +
-                                "unexpected response" )
+                main.log.error( "Error in electionTestRun on " + self.name +
+                                ": " + "unexpected response" )
                 main.log.error( repr( response ) )
                 return main.FALSE
         except TypeError:
@@ -2367,8 +2575,8 @@ class OnosCliDriver( CLI ):
                 main.log.error( "Election app is not loaded on " + self.name )
                 return main.FALSE
             else:
-                main.log.error( "Error in election_test_withdraw: " +
-                                "unexpected response" )
+                main.log.error( "Error in electionTestWithdraw on " +
+                                self.name + ": " + "unexpected response" )
                 main.log.error( repr( response ) )
                 return main.FALSE
         except TypeError:
@@ -2492,20 +2700,69 @@ class OnosCliDriver( CLI ):
         Optional argument:
             * jsonFormat - boolean indicating if you want output in json
         """
-        # FIXME: add json output
-        # Sample JSON
-        # {
-        #     "electedTime": "13m ago",
-        #     "epoch": 4,
-        #     "leader": "10.128.30.17",
-        #     "topic": "intent-partition-3"
-        #  },
         try:
             cmdStr = "onos:leaders"
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
             return output
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def leaderCandidates( self, jsonFormat=True ):
+        """
+        Returns the output of the leaders -c command.
+        Optional argument:
+            * jsonFormat - boolean indicating if you want output in json
+        """
+        try:
+            cmdStr = "onos:leaders -c"
+            if jsonFormat:
+                cmdStr += " -j"
+            output = self.sendline( cmdStr )
+            return output
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def specificLeaderCandidate(self,topic):
+        """
+        Returns a list in format [leader,candidate1,candidate2,...] for a given
+        topic parameter and an empty list if the topic doesn't exist
+        If no leader is elected leader in the returned list will be "none"
+        Returns None if there is a type error processing the json object
+        """
+        try:
+            cmdStr = "onos:leaders -c -j"
+            output = self.sendline( cmdStr )
+            output = json.loads(output)
+            results = []
+            for dict in output:
+                if dict["topic"] == topic:
+                    leader = dict["leader"]
+                    candidates = re.split(", ",dict["candidates"][1:-1])
+                    results.append(leader)
+                    results.extend(candidates)
+            return results
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2931,8 +3188,21 @@ class OnosCliDriver( CLI ):
                  main.ERROR if there is some error in processing the test
         """
         try:
-            ids = json.loads( self.appIDs( jsonFormat=True ) )
-            apps = json.loads( self.apps( jsonFormat=True ) )
+            bail = False
+            ids = self.appIDs( jsonFormat=True )
+            if ids:
+                ids = json.loads( ids )
+            else:
+                main.log.error( "app-ids returned nothing:" + repr( ids ) )
+                bail = True
+            apps = self.apps( jsonFormat=True )
+            if apps:
+                apps = json.loads( apps )
+            else:
+                main.log.error( "apps returned nothing:" + repr( apps ) )
+                bail = True
+            if bail:
+                return main.FALSE
             result = main.TRUE
             for app in apps:
                 appID = app.get( 'id' )
@@ -2944,7 +3214,7 @@ class OnosCliDriver( CLI ):
                     main.log.error( "Error parsing app: " + str( app ) )
                     result = main.FALSE
                 # get the entry in ids that has the same appID
-                current = filter(lambda item: item[ 'id' ] == appID, ids)
+                current = filter( lambda item: item[ 'id' ] == appID, ids )
                 # main.log.debug( "Comparing " + str( app ) + " to " +
                 #                 str( current ) )
                 if not current:  # if ids doesn't have this id
@@ -3044,10 +3314,11 @@ class OnosCliDriver( CLI ):
     def setCfg( self, component, propName, value=None, check=True ):
         """
         Set/Unset configuration settings from ONOS cli
-        Optional arguments:
+        Required arguments:
             component - The case sensitive name of the component whose
                         property is to be set
             propName - The case sensitive name of the property to be set/unset
+        Optional arguments:
             value - The value to set the property to. If None, will unset the
                     property and revert it to it's default value(if applicable)
             check - Boolean, Check whether the option was successfully set this
@@ -3096,3 +3367,679 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
+    def setTestAdd( self, setName, values ):
+        """
+        CLI command to add elements to a distributed set.
+        Arguments:
+            setName - The name of the set to add to.
+            values - The value(s) to add to the set, space seperated.
+        Example usages:
+            setTestAdd( "set1", "a b c" )
+            setTestAdd( "set2", "1" )
+        returns:
+            main.TRUE on success OR
+            main.FALSE if elements were already in the set OR
+            main.ERROR on error
+        """
+        try:
+            cmdStr = "set-test-add " + str( setName ) + " " + str( values )
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                retryTime = 30  # Conservative time, given by Madan
+                main.log.info( "Waiting " + str( retryTime ) +
+                               "seconds before retrying." )
+                time.sleep( retryTime )  # Due to change in mastership
+                output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            positiveMatch = "\[(.*)\] was added to the set " + str( setName )
+            negativeMatch = "\[(.*)\] was already in set " + str( setName )
+            main.log.info( self.name + ": " + output )
+            if re.search( positiveMatch, output):
+                return main.TRUE
+            elif re.search( negativeMatch, output):
+                return main.FALSE
+            else:
+                main.log.error( self.name + ": setTestAdd did not" +
+                                " match expected output" )
+                main.log.debug( self.name + " actual: " + repr( output ) )
+                return main.ERROR
+        except AssertionError:
+            main.log.error( "Error in processing '" + cmdStr + "' command: " +
+                            str( output ) )
+            return main.ERROR
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.ERROR
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def setTestRemove( self, setName, values, clear=False, retain=False ):
+        """
+        CLI command to remove elements from a distributed set.
+        Required arguments:
+            setName - The name of the set to remove from.
+            values - The value(s) to remove from the set, space seperated.
+        Optional arguments:
+            clear - Clear all elements from the set
+            retain - Retain only the  given values. (intersection of the
+                     original set and the given set)
+        returns:
+            main.TRUE on success OR
+            main.FALSE if the set was not changed OR
+            main.ERROR on error
+        """
+        try:
+            cmdStr = "set-test-remove "
+            if clear:
+                cmdStr += "-c " + str( setName )
+            elif retain:
+                cmdStr += "-r " + str( setName ) + " " + str( values )
+            else:
+                cmdStr += str( setName ) + " " + str( values )
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                retryTime = 30  # Conservative time, given by Madan
+                main.log.info( "Waiting " + str( retryTime ) +
+                               "seconds before retrying." )
+                time.sleep( retryTime )  # Due to change in mastership
+                output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            main.log.info( self.name + ": " + output )
+            if clear:
+                pattern = "Set " + str( setName ) + " cleared"
+                if re.search( pattern, output ):
+                    return main.TRUE
+            elif retain:
+                positivePattern = str( setName ) + " was pruned to contain " +\
+                                  "only elements of set \[(.*)\]"
+                negativePattern = str( setName ) + " was not changed by " +\
+                                  "retaining only elements of the set " +\
+                                  "\[(.*)\]"
+                if re.search( positivePattern, output ):
+                    return main.TRUE
+                elif re.search( negativePattern, output ):
+                    return main.FALSE
+            else:
+                positivePattern = "\[(.*)\] was removed from the set " +\
+                                  str( setName )
+                if ( len( values.split() ) == 1 ):
+                    negativePattern = "\[(.*)\] was not in set " +\
+                                      str( setName )
+                else:
+                    negativePattern = "No element of \[(.*)\] was in set " +\
+                                      str( setName )
+                if re.search( positivePattern, output ):
+                    return main.TRUE
+                elif re.search( negativePattern, output ):
+                    return main.FALSE
+            main.log.error( self.name + ": setTestRemove did not" +
+                            " match expected output" )
+            main.log.debug( self.name + " expected: " + pattern )
+            main.log.debug( self.name + " actual: " + repr( output ) )
+            return main.ERROR
+        except AssertionError:
+            main.log.error( "Error in processing '" + cmdStr + "' command: " +
+                            str( output ) )
+            return main.ERROR
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.ERROR
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def setTestGet( self, setName, values="" ):
+        """
+        CLI command to get the elements in a distributed set.
+        Required arguments:
+            setName - The name of the set to remove from.
+        Optional arguments:
+            values - The value(s) to check if in the set, space seperated.
+        returns:
+            main.ERROR on error OR
+            A list of elements in the set if no optional arguments are
+                supplied OR
+            A tuple containing the list then:
+                main.FALSE if the given values are not in the set OR
+                main.TRUE if the given values are in the set OR
+        """
+        try:
+            values = str( values ).strip()
+            setName = str( setName ).strip()
+            length = len( values.split() )
+            containsCheck = None
+            # Patterns to match
+            setPattern = "\[(.*)\]"
+            pattern = "Items in set " + setName + ":\n" + setPattern
+            containsTrue = "Set " + setName + " contains the value " + values
+            containsFalse = "Set " + setName + " did not contain the value " +\
+                            values
+            containsAllTrue = "Set " + setName + " contains the the subset " +\
+                              setPattern
+            containsAllFalse = "Set " + setName + " did not contain the the" +\
+                               " subset " + setPattern
+
+            cmdStr = "set-test-get "
+            cmdStr += setName + " " + values
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                retryTime = 30  # Conservative time, given by Madan
+                main.log.info( "Waiting " + str( retryTime ) +
+                               "seconds before retrying." )
+                time.sleep( retryTime )  # Due to change in mastership
+                output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            main.log.info( self.name + ": " + output )
+
+            if length == 0:
+                match = re.search( pattern, output )
+            else:  # if given values
+                if length == 1:  # Contains output
+                    patternTrue = pattern + "\n" + containsTrue
+                    patternFalse = pattern + "\n" + containsFalse
+                else:  # ContainsAll output
+                    patternTrue = pattern + "\n" + containsAllTrue
+                    patternFalse = pattern + "\n" + containsAllFalse
+                matchTrue = re.search( patternTrue, output )
+                matchFalse = re.search( patternFalse, output )
+                if matchTrue:
+                    containsCheck = main.TRUE
+                    match = matchTrue
+                elif matchFalse:
+                    containsCheck = main.FALSE
+                    match = matchFalse
+                else:
+                    main.log.error( self.name + " setTestGet did not match " +\
+                                    "expected output" )
+                    main.log.debug( self.name + " expected: " + pattern )
+                    main.log.debug( self.name + " actual: " + repr( output ) )
+                    match = None
+            if match:
+                setMatch = match.group( 1 )
+                if setMatch == '':
+                    setList = []
+                else:
+                    setList = setMatch.split( ", " )
+                if length > 0:
+                    return ( setList, containsCheck )
+                else:
+                    return setList
+            else:  # no match
+                main.log.error( self.name + ": setTestGet did not" +
+                                " match expected output" )
+                main.log.debug( self.name + " expected: " + pattern )
+                main.log.debug( self.name + " actual: " + repr( output ) )
+                return main.ERROR
+        except AssertionError:
+            main.log.error( "Error in processing '" + cmdStr + "' command: " +
+                            str( output ) )
+            return main.ERROR
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.ERROR
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def setTestSize( self, setName ):
+        """
+        CLI command to get the elements in a distributed set.
+        Required arguments:
+            setName - The name of the set to remove from.
+        returns:
+            The integer value of the size returned or
+            None on error
+        """
+        try:
+            # TODO: Should this check against the number of elements returned
+            #       and then return true/false based on that?
+            setName = str( setName ).strip()
+            # Patterns to match
+            setPattern = "\[(.*)\]"
+            pattern = "There are (\d+) items in set " + setName + ":\n" +\
+                          setPattern
+            cmdStr = "set-test-get -s "
+            cmdStr += setName
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                retryTime = 30  # Conservative time, given by Madan
+                main.log.info( "Waiting " + str( retryTime ) +
+                               "seconds before retrying." )
+                time.sleep( retryTime )  # Due to change in mastership
+                output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            main.log.info( self.name + ": " + output )
+            match = re.search( pattern, output )
+            if match:
+                setSize = int( match.group( 1 ) )
+                setMatch = match.group( 2 )
+                if len( setMatch.split() ) == setSize:
+                    main.log.info( "The size returned by " + self.name +
+                                   " matches the number of elements in " +
+                                   "the returned set" )
+                else:
+                    main.log.error( "The size returned by " + self.name +
+                                    " does not match the number of " +
+                                    "elements in the returned set." )
+                return setSize
+            else:  # no match
+                main.log.error( self.name + ": setTestGet did not" +
+                                " match expected output" )
+                main.log.debug( self.name + " expected: " + pattern )
+                main.log.debug( self.name + " actual: " + repr( output ) )
+                return None
+        except AssertionError:
+            main.log.error( "Error in processing '" + cmdStr + "' command: " +
+                            str( output ) )
+            return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def counters( self, jsonFormat=True ):
+        """
+        Command to list the various counters in the system.
+        returns:
+            if jsonFormat, a string of the json object returned by the cli
+            command
+            if not jsonFormat, the normal string output of the cli command
+            None on error
+        """
+        try:
+            counters = {}
+            cmdStr = "counters"
+            if jsonFormat:
+                cmdStr += " -j"
+            output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            main.log.info( self.name + ": " + output )
+            return output
+        except AssertionError:
+            main.log.error( "Error in processing 'counters' command: " +
+                            str( output ) )
+            return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def counterTestAddAndGet( self, counter, delta=1, inMemory=False ):
+        """
+        CLI command to add a delta to then get a distributed counter.
+        Required arguments:
+            counter - The name of the counter to increment.
+        Optional arguments:
+            delta - The long to add to the counter
+            inMemory - use in memory map for the counter
+        returns:
+            integer value of the counter or
+            None on Error
+        """
+        try:
+            counter = str( counter )
+            delta = int( delta )
+            cmdStr = "counter-test-increment "
+            if inMemory:
+                cmdStr += "-i "
+            cmdStr += counter
+            if delta != 1:
+                cmdStr += " " + str( delta )
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                retryTime = 30  # Conservative time, given by Madan
+                main.log.info( "Waiting " + str( retryTime ) +
+                               "seconds before retrying." )
+                time.sleep( retryTime )  # Due to change in mastership
+                output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            main.log.info( self.name + ": " + output )
+            pattern = counter + " was updated to (-?\d+)"
+            match = re.search( pattern, output )
+            if match:
+                return int( match.group( 1 ) )
+            else:
+                main.log.error( self.name + ": counterTestAddAndGet did not" +
+                                " match expected output." )
+                main.log.debug( self.name + " expected: " + pattern )
+                main.log.debug( self.name + " actual: " + repr( output ) )
+                return None
+        except AssertionError:
+            main.log.error( "Error in processing '" + cmdStr + "'" +
+                            " command: " + str( output ) )
+            return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def counterTestGetAndAdd( self, counter, delta=1, inMemory=False ):
+        """
+        CLI command to get a distributed counter then add a delta to it.
+        Required arguments:
+            counter - The name of the counter to increment.
+        Optional arguments:
+            delta - The long to add to the counter
+            inMemory - use in memory map for the counter
+        returns:
+            integer value of the counter or
+            None on Error
+        """
+        try:
+            counter = str( counter )
+            delta = int( delta )
+            cmdStr = "counter-test-increment -g "
+            if inMemory:
+                cmdStr += "-i "
+            cmdStr += counter
+            if delta != 1:
+                cmdStr += " " + str( delta )
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                retryTime = 30  # Conservative time, given by Madan
+                main.log.info( "Waiting " + str( retryTime ) +
+                               "seconds before retrying." )
+                time.sleep( retryTime )  # Due to change in mastership
+                output = self.sendline( cmdStr )
+            assert "Error executing command" not in output
+            main.log.info( self.name + ": " + output )
+            pattern = counter + " was updated to (-?\d+)"
+            match = re.search( pattern, output )
+            if match:
+                return int( match.group( 1 ) )
+            else:
+                main.log.error( self.name + ": counterTestGetAndAdd did not" +
+                                " match expected output." )
+                main.log.debug( self.name + " expected: " + pattern )
+                main.log.debug( self.name + " actual: " + repr( output ) )
+                return None
+        except AssertionError:
+            main.log.error( "Error in processing '" + cmdStr + "'" +
+                            " command: " + str( output ) )
+            return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def summary( self, jsonFormat=True ):
+        """
+        Description: Execute summary command in onos
+        Returns: json object ( summary -j ), returns main.FALSE if there is
+        no output
+
+        """
+        try:
+            cmdStr = "summary"
+            if jsonFormat:
+                cmdStr += " -j"
+            handle = self.sendline( cmdStr )
+
+            if re.search( "Error:", handle ):
+                main.log.error( self.name + ": summary() response: " +
+                                str( handle ) )
+            if not handle:
+                main.log.error( self.name + ": There is no output in " +
+                                "summary command" )
+                return main.FALSE
+            return handle
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def transactionalMapGet( self, keyName, inMemory=False ):
+        """
+        CLI command to get the value of a key in a consistent map using
+        transactions. This a test function and can only get keys from the
+        test map hard coded into the cli command
+        Required arguments:
+            keyName - The name of the key to get
+        Optional arguments:
+            inMemory - use in memory map for the counter
+        returns:
+            The string value of the key or
+            None on Error
+        """
+        try:
+            keyName = str( keyName )
+            cmdStr = "transactional-map-test-get "
+            if inMemory:
+                cmdStr += "-i "
+            cmdStr += keyName
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                return None
+            pattern = "Key-value pair \(" + keyName + ", (?P<value>.+)\) found."
+            if "Key " + keyName + " not found." in output:
+                return None
+            else:
+                match = re.search( pattern, output )
+                if match:
+                    return match.groupdict()[ 'value' ]
+                else:
+                    main.log.error( self.name + ": transactionlMapGet did not" +
+                                    " match expected output." )
+                    main.log.debug( self.name + " expected: " + pattern )
+                    main.log.debug( self.name + " actual: " + repr( output ) )
+                    return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def transactionalMapPut( self, numKeys, value, inMemory=False ):
+        """
+        CLI command to put a value into 'numKeys' number of keys in a
+        consistent map using transactions. This a test function and can only
+        put into keys named 'Key#' of the test map hard coded into the cli command
+        Required arguments:
+            numKeys - Number of keys to add the value to
+            value - The string value to put into the keys
+        Optional arguments:
+            inMemory - use in memory map for the counter
+        returns:
+            A dictionary whose keys are the name of the keys put into the map
+            and the values of the keys are dictionaries whose key-values are
+            'value': value put into map and optionaly
+            'oldValue': Previous value in the key or
+            None on Error
+
+            Example output
+            { 'Key1': {'oldValue': 'oldTestValue', 'value': 'Testing'},
+              'Key2': {'value': 'Testing'} }
+        """
+        try:
+            numKeys = str( numKeys )
+            value = str( value )
+            cmdStr = "transactional-map-test-put "
+            if inMemory:
+                cmdStr += "-i "
+            cmdStr += numKeys + " " + value
+            output = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in output
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in output
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( output ) )
+                return None
+            newPattern = 'Created Key (?P<key>(\w)+) with value (?P<value>(.)+)\.'
+            updatedPattern = "Put (?P<value>(.)+) into key (?P<key>(\w)+)\. The old value was (?P<oldValue>(.)+)\."
+            results = {}
+            for line in output.splitlines():
+                new = re.search( newPattern, line )
+                updated = re.search( updatedPattern, line )
+                if new:
+                    results[ new.groupdict()[ 'key' ] ] = { 'value': new.groupdict()[ 'value' ] }
+                elif updated:
+                    results[ updated.groupdict()[ 'key' ] ] = { 'value': updated.groupdict()[ 'value' ],
+                                                            'oldValue': updated.groupdict()[ 'oldValue' ] }
+                else:
+                    main.log.error( self.name + ": transactionlMapGet did not" +
+                                    " match expected output." )
+                    main.log.debug( self.name + " expected: " + pattern )
+                    main.log.debug( self.name + " actual: " + repr( output ) )
+            return results
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+    def maps( self, jsonFormat=True ):
+        """
+        Description: Returns result of onos:maps
+        Optional:
+            * jsonFormat: enable json formatting of output
+        """
+        try:
+            cmdStr = "maps"
+            if jsonFormat:
+                cmdStr += " -j"
+            handle = self.sendline( cmdStr )
+            return handle
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()

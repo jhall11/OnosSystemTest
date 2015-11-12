@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 '''
 Created on 20-Dec-2012
-    
+
 @author: Anil Kumar (anilkumar.s@paxterrasolutions.com)
 
 
@@ -17,7 +17,7 @@ Created on 20-Dec-2012
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with TestON.  If not, see <http://www.gnu.org/licenses/>.		
+    along with TestON.  If not, see <http://www.gnu.org/licenses/>.
 
 
 '''
@@ -50,9 +50,8 @@ __builtin__.testthread = False
 introduction = "TestON is the testing framework \nDeveloped by Paxterra Solutions (www.paxterrasolutions.com)"
 __builtin__.COLORS = False
 
-path = re.sub("teston$", "", os.getcwd())
-sys.path.append(path+"/Core")
-sys.path.append("../")
+path = re.sub( "/bin$", "", sys.path[0] )
+sys.path.insert( 1, path )
 from core.teston import *
 
 class CLI( threading.Thread,Cmd,object ):
@@ -94,16 +93,24 @@ class CLI( threading.Thread,Cmd,object ):
         mail <mail-id or list of mail-ids seperated by comma>
         example 1, to execute the examples specified in the ~/examples diretory.
         '''
-        args = args.split()
-        options = {}
-        options = self.parseArgs(args,options)
-        options = dictToObj(options)
-        if not testthread:
-            test = TestThread(options)
-            test.start()
-        else :
-            print main.TEST+ " test execution paused, please resume that before executing to another test"
-                    
+        try:
+            args = args.split()
+            options = {}
+            options = self.parseArgs(args,options)
+            options = dictToObj(options)
+            if not testthread:
+                test = TestThread(options)
+                test.start()
+                while test.isAlive():
+                    test.join(1)
+            else:
+                print main.TEST+ " test execution paused, please resume that before executing to another test"
+        except KeyboardInterrupt, SystemExit:
+            print "Interrupt called, Exiting."
+            test._Thread__stop()
+            main.cleanup()
+            main.exit()
+
     def do_resume(self, line):
         '''
         resume command will continue the execution of paused test.
@@ -116,20 +123,20 @@ class CLI( threading.Thread,Cmd,object ):
             testthread.play()
         else :
             print "There is no test to resume"
-    
+
     def do_nextstep(self,line):
         '''
-        nextstep will execute the next-step of the paused test and 
+        nextstep will execute the next-step of the paused test and
         it will pause the test after finishing of step.
-        
+
         teston> nextstep
         Will pause the test's execution, after completion of this step.....
-        
+
         teston> [2013-01-07 21:24:26.286601] [PoxTest] [STEP]  1.8: Checking the host reachability using pingHost
         2013-01-07 21:24:26,455 - PoxTest - INFO - Expected Prompt Found
         .....
         teston>
-        
+
         '''
         if testthread:
             main.log.info("Executing the nextstep, Will pause test execution, after completion of the step")
@@ -138,17 +145,17 @@ class CLI( threading.Thread,Cmd,object ):
             testthread.pause()
         else:
             print "There is no paused test "
-        
+
     def do_dumpvar(self,line):
         '''
         dumpvar will print all the test data in raw format.
-        usgae : 
+        usgae :
         teston>dumpvar main
         Here 'main' will be the test object.
-        
-        teston>dumpvar params 
+
+        teston>dumpvar params
         here 'params' will be the parameters specified in the params file.
-        
+
         teston>dumpvar topology
         here 'topology' will be topology specification of the test specified in topo file.
         '''
@@ -158,29 +165,29 @@ class CLI( threading.Thread,Cmd,object ):
             else :
                 try :
                     dump.pprint(vars(main)[line])
-                except KeyError,e:
+                except KeyError as e:
                     print e
         else :
             print "There is no paused test "
-            
+
     def do_currentcase(self,line):
         '''
         currentcase will return the current case in the test execution.
-        
+
         teston>currentcase
         Currently executing test case is: 2
-         
+
         '''
         if testthread:
             print "Currently executing test case is: "+str(main.CurrentTestCaseNumber)
         else :
             print "There is no paused test "
-            
-            
+
+
     def do_currentstep(self,line):
         '''
         currentstep will return the current step in the test execution.
-         
+
         teston>currentstep
         Currently executing test step is: 2.3
         '''
@@ -188,25 +195,25 @@ class CLI( threading.Thread,Cmd,object ):
             print "Currently executing test step is: "+str(main.CurrentTestCaseNumber)+'.'+str(main.stepCount)
         else :
             print "There is no paused test "
-    
-    
+
+
     def do_stop(self,line):
         '''
         Will stop the paused test, if any !
         '''
         if testthread:
             testthread.stop()
-            
+
         return 'exited by user command'
-        
+
     def do_gettest(self,line):
         '''
         gettest will return the test name which is under execution or recently executed.
-        
+
         Test under execution:
-        teston>gettest 
+        teston>gettest
         Currently executing Test is: PoxTest
-        
+
         Test recently executed:
         Recently executed test is: MininetTest
         '''
@@ -215,10 +222,10 @@ class CLI( threading.Thread,Cmd,object ):
                 print "Currently executing Test is: "+main.TEST
             else :
                 print "Recently executed test is: "+main.TEST
-            
+
         except NameError:
             print "There is no previously executed Test"
-            
+
     def do_showlog(self,line):
         '''
         showlog will show the test's Log
@@ -232,22 +239,22 @@ class CLI( threading.Thread,Cmd,object ):
         try :
             if testthread :
                 print "Currently executing Test's log is: "+main.LogFileName
-                
+
             else :
                 print "Last executed test's log is : "+main.LogFileName
-            
+
             logFile = main.LogFileName
             logFileHandler = open(logFile, 'r')
             for msg in logFileHandler.readlines() :
                 print msg,
-                
+
             logFileHandler.close()
-            
+
         except NameError:
             print "There is no previously executed Test"
-            
-    
-            
+
+
+
     def parseArgs(self,args,options):
         '''
         This will parse the command line arguments.
@@ -256,17 +263,17 @@ class CLI( threading.Thread,Cmd,object ):
         try :
             for index, option in enumerate(args):
                 if index > 0 :
-                    if re.match("logdir|mail|example|testdir|testcases", option, flags = 0):
+                    if re.match("logdir|mail|example|testdir|testcases|onoscell", option, flags = 0):
                         index = index+1
                         options[option] = args[index]
                         options = self.testcasesInRange(index,option,args,options)
                 else :
                     options['testname'] = option
-        except IndexError,e:
+        except IndexError as e:
             print e
-            
+
         return options
-    
+
     def initOptions(self,options):
         '''
         This will initialize the commandline options.
@@ -276,8 +283,9 @@ class CLI( threading.Thread,Cmd,object ):
         options['example'] = None
         options['testdir'] = None
         options['testcases'] = None
-        return options   
-    
+        options['onoscell'] = None
+        return options
+
     def testcasesInRange(self,index,option,args,options):
         '''
         This method will handle testcases list,specified in range [1-10].
@@ -293,16 +301,16 @@ class CLI( threading.Thread,Cmd,object ):
                     i = start_case
                     while i <= end_case:
                         testcases.append(i)
-                        i= i+1         
+                        i= i+1
                 else :
                     print "Please specify testcases properly like 1-5"
             else :
                 options[option] = args[index]
                 return options
             options[option] = str(testcases)
-            
+
         return options
-    
+
     def cmdloop(self, intro=introduction):
         print introduction
         while True:
@@ -310,7 +318,11 @@ class CLI( threading.Thread,Cmd,object ):
                 super(CLI, self).cmdloop(intro="")
                 self.postloop()
             except KeyboardInterrupt:
-                testthread.pause()
+                if testthread:
+                    testthread.pause()
+                else:
+                    print "KeyboardInterrupt, Exiting."
+                    sys.exit()
 
     def do_echo( self, line ):
         '''
@@ -330,32 +342,32 @@ class CLI( threading.Thread,Cmd,object ):
     def do_py( self, line ):
         '''
         Evaluate a Python expression.
-        
+
         py main.log.info("Sample Log Information")
         2013-01-07 12:07:26,804 - PoxTest - INFO - Sample Log Information
-        
+
         '''
         try:
             exec( line )
-        except Exception, e:
+        except Exception as e:
             output( str( e ) + '\n' )
-            
+
     def do_interpret(self,line):
         '''
         interpret will translate the single line openspeak statement to equivalent python script.
-        
+
         teston> interpret ASSERT result EQUALS main.TRUE ONPASS "Ping executed successfully" ONFAIL "Ping failed"
         utilities.assert_equals(expect=main.TRUE,actual=result,onpass="Ping executed successfully",onfail="Ping failed")
- 
+
         '''
         from core import openspeak
         ospk = openspeak.OpenSpeak()
         try :
             translated_code = ospk.interpret(text=line)
             print translated_code
-        except AttributeError, e:
+        except AttributeError as e:
             print 'Dynamic params are not allowed in single statement translations'
-        
+
     def do_do (self,line):
         '''
         Do will translate and execute the openspeak statement for the paused test.
@@ -367,25 +379,26 @@ class CLI( threading.Thread,Cmd,object ):
             try :
                 translated_code = ospk.interpret(text=line)
                 eval(translated_code)
-            except (AttributeError,SyntaxError), e:
-                print 'Dynamic params are not allowed in single statement translations'
+            except ( AttributeError, SyntaxError ) as e:
+                print 'Dynamic params are not allowed in single statement translations:'
+                print e
         else :
             print "Do will translate and execute the openspeak statement for the paused test.\nPlease use interpret to translate the OpenSpeak statement."
-            
+
     def do_compile(self,line):
         '''
         compile will translate the openspeak (.ospk) file into TestON test script (python).
-        It will receive the openspeak file path as input and will generate 
-        equivalent test-script file in the same directory. 
-        
+        It will receive the openspeak file path as input and will generate
+        equivalent test-script file in the same directory.
+
         usage:
         -----
         teston>compile /home/openflow/TestON/PoxTest.ospk
-        
+
         Auto-generated test-script file is /home/openflow/TestON/PoxTest.py
         '''
         from core import openspeak
-        openspeak = openspeak.OpenSpeak()      
+        openspeak = openspeak.OpenSpeak()
         openspeakfile = line
         if os.path.exists(openspeakfile) :
             openspeak.compiler(openspeakfile=openspeakfile,writetofile=1)
@@ -397,7 +410,7 @@ class CLI( threading.Thread,Cmd,object ):
         "Exit"
         if testthread:
             testthread.stop()
-            
+
         sys.exit()
 
         return 'exited by user command'
@@ -419,16 +432,16 @@ class CLI( threading.Thread,Cmd,object ):
         '''
         Read shell commands from an input file and execute them sequentially.
         cmdsource.txt :
-        
+
         "pwd
          ls "
-         
+
         teston>source /home/openflow/cmdsource.txt
         /home/openflow/TestON/bin/
         cli.py  __init__.py
-        
+
         '''
-        
+
         args = line.split()
         if len(args) != 1:
             error( 'usage: source <file>\n' )
@@ -443,15 +456,15 @@ class CLI( threading.Thread,Cmd,object ):
                     break
         except IOError:
             error( 'error reading file %s\n' % args[ 0 ] )
-    
+
     def do_updatedriver(self,line):
         '''
          updatedriver will update the given driver name which exists into mentioned config file.
          It will receive two optional arguments :
-         
-         1. Config File Path 
+
+         1. Config File Path
          2. Drivers List to be updated.
-        
+
          Default : config file = "~/TestON/config/updatedriver" ,
                    Driver List = all drivers specified in config file .
         '''
@@ -464,28 +477,29 @@ class CLI( threading.Thread,Cmd,object ):
                     index = index + 1
                     config = args[index]
                 elif option == 'drivers' :
-                    index = index + 1 
+                    index = index + 1
                     drivers = args[index]
         except IndexError:
-            pass        
+            pass
         import updatedriver
         converter = updatedriver.UpdateDriver()
-        
+
         if config == '':
-            path = re.sub("(bin)$", "", os.getcwd())
+            location = os.path.abspath( os.path.dirname( __file__ ) )
+            path = re.sub( "(bin)$", "", location )
             config = path + "/config/updatedriver.cfg"
             configDict = converter.configparser(config)
-            
+
         else :
             converter.configparser(config)
             configDict = converter.configparser(config)
-           
-            
+
+
         converter.writeDriver(drivers)
-                      
-       
-                     
-        
+
+
+
+
     def do_time( self, line ):
         "Measure time taken for any command in TestON."
         start = time.time()
@@ -530,20 +544,28 @@ class TestThread(threading.Thread):
                         if not self.is_stop :
                             result = self.test_on.cleanup()
                         self.is_stop = True
-                except(KeyboardInterrupt):
-                    print "Recevied Interrupt,cleaning-up the logs and drivers before exiting"
+                except KeyboardInterrupt:
+                    print "Recevied Interrupt, cleaning-up the logs and drivers before exiting"
                     result = self.test_on.cleanup()
                     self.is_stop = True
 
-        __builtin__.testthread = False       
+        __builtin__.testthread = False
 
     def pause(self):
         '''
         Will pause the test.
         '''
-        print "Will pause the test's execution, after completion of this step.....\n\n\n\n"
-        cli.pause = True
-        self._stopevent.set()
+        if not cli.pause:
+            print "Will pause the test's execution, after completion of this step.....\n\n\n\n"
+            cli.pause = True
+            self._stopevent.set()
+        elif cli.pause and self.is_stop:
+            print "KeyboardInterrupt, Exiting."
+            self.test_on.exit()
+        else:
+            print "Recevied Interrupt, cleaning-up the logs and drivers before exiting"
+            result = self.test_on.cleanup()
+            self.is_stop = True
 
     def play(self):
         '''
@@ -551,17 +573,17 @@ class TestThread(threading.Thread):
         '''
         self._stopevent.clear()
         cli.pause = False
-        
+
     def stop(self):
         '''
         Will stop the test execution.
         '''
-        
+
         print "Stopping the test"
         self.is_stop = True
         cli.stop = True
         __builtin__.testthread = False
-        
+
 def output(msg):
     '''
     Simply, print the message in console

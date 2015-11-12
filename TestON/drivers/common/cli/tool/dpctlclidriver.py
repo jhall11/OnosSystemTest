@@ -22,19 +22,8 @@ author:: Raghav Kashyap( raghavkashyap@paxterrasolutions.com )
 
 DPCTL driver class provides the basic functions of DPCTL controller
 """
-import pexpect
-import struct
-import fcntl
-import os
-import sys
-import signal
 import sys
 from drivers.common.cli.toolsdriver import Tools
-import pydoc
-from drivers.common.clidriver import CLI
-import re
-import os
-import sys
 
 
 class DpctlCliDriver( Tools ):
@@ -54,11 +43,11 @@ class DpctlCliDriver( Tools ):
 
         self.name = self.options[ 'name' ]
 
-        self.handle = super( 
-		      DpctlCliDriver, self ).connect( user_name=self.user_name,
-         	      ip_address=self.ip_address,
-         	      port=None,
-         	      pwd=self.pwd )
+        self.handle = super(
+                   DpctlCliDriver, self ).connect( user_name=self.user_name,
+                   ip_address=self.ip_address,
+                   port=None,
+                   pwd=self.pwd )
         if self.handle:
             main.log.info( "Connected to the host" )
             return main.TRUE
@@ -75,12 +64,12 @@ class DpctlCliDriver( Tools ):
          addFlow create a new flow entry into flow table using "dpctl"
         """
         args = utilities.parse_args( [
-				     "TCPIP",
+                                     "TCPIP",
                                      "TCPPORT",
                                      "INPORT",
                                      "ACTION",
                                      "TIMEOUT" ],
-            			     **flowParameters )
+                             **flowParameters )
 
         cmd = "dpctl add-flow tcp:"
         tcpIP = args[ "TCPIP" ] if args[ "TCPIP" ] is not None else "127.0.0.1"
@@ -261,10 +250,10 @@ class DpctlCliDriver( Tools ):
          desc_set Sets the switch description ( as returned in ofp_desc_stats ) to string ( max length is DESC_STR_LEN )
         """
         args = utilities.parse_args( [
-				     "TCPIP",
+                                     "TCPIP",
                                      "TCPPORT",
                                      "STRING" ],
-           			     **flowParameters )
+                            **flowParameters )
 
         tcpIP = args[ "TCPIP" ] if args[ "TCPIP" ] is not None else "127.0.0.1"
         tcpPort = args[ "TCPPORT" ] if args[
@@ -289,10 +278,10 @@ class DpctlCliDriver( Tools ):
          dumpDesc Sets the switch description ( as returned in ofp_desc_stats ) to string ( max length is DESC_STR_LEN )
         """
         args = utilities.parse_args( [
-				     "TCPIP",
+                                     "TCPIP",
                                      "TCPPORT",
                                      "STRING" ],
-            			     **flowParameters )
+                             **flowParameters )
 
         tcpIP = args[ "TCPIP" ] if args[ "TCPIP" ] is not None else "127.0.0.1"
         tcpPort = args[ "TCPPORT" ] if args[

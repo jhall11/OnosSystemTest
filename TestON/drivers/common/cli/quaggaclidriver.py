@@ -4,7 +4,6 @@ import time
 import pexpect
 import sys
 import json
-sys.path.append( "../" )
 from drivers.common.clidriver import CLI
 
 
@@ -28,7 +27,6 @@ class QuaggaCliDriver( CLI ):
         else:
             main.log.info( "NO HANDLE" )
             return main.FALSE
-            
 
     def connectQuagga( self ):
         self.name = self.options[ 'name' ]
@@ -40,9 +38,9 @@ class QuaggaCliDriver( CLI ):
                 ip_address="1.1.1.1",
                 port=self.port,
                 pwd=self.pwd )
-        main.log.info( "connect parameters:" + str( self.user_name ) + ";"
-                       + str( self.ip_address ) + ";" + str( self.port )
-                       + ";" + str(self.pwd ) )
+        #main.log.info( "connect parameters:" + str( self.user_name ) + ";"
+        #               + str( self.ip_address ) + ";" + str( self.port )
+        #               + ";" + str(self.pwd ) )
 
         if self.handle:
             # self.handle.expect( "",timeout=10 )
@@ -186,7 +184,7 @@ class QuaggaCliDriver( CLI ):
         return intents
 
     # This method extracts all actual routes from ONOS CLI
-    def extractActualRoutes( self, getRoutesResult ):
+    def extractActualRoutesOneDotZero( self, getRoutesResult ):
         routesJsonObj = json.loads( getRoutesResult )
 
         allRoutesActual = []
@@ -199,6 +197,18 @@ class QuaggaCliDriver( CLI ):
 
         return sorted( allRoutesActual )
 
+    def extractActualRoutesMaster( self, getRoutesResult ):
+        routesJsonObj = json.loads( getRoutesResult )
+
+        allRoutesActual = []
+        for route in routesJsonObj['routes4']:
+            if route[ 'prefix' ] == '172.16.10.0/24':
+                continue
+            allRoutesActual.append(
+                route[ 'prefix' ] + "/" + route[ 'nextHop' ] )
+
+        return sorted( allRoutesActual )
+
     # This method extracts all actual route intents from ONOS CLI
     def extractActualRouteIntents( self, getIntentsResult ):
         intents = []
@@ -207,8 +217,8 @@ class QuaggaCliDriver( CLI ):
         intentsJsonObj = json.loads( getIntentsResult )
 
         for intent in intentsJsonObj:
-            if intent[ 'appId' ] != "org.onosproject.sdnip":
-                continue
+            #if intent[ 'appId' ] != "org.onosproject.sdnip":
+            #    continue
             if intent[ 'type' ] == "MultiPointToSinglePointIntent" \
             and intent[ 'state' ] == 'INSTALLED':
                 egress = str( intent[ 'egress' ][ 'device' ] ) + ":" \
@@ -230,6 +240,26 @@ class QuaggaCliDriver( CLI ):
                 intents.append( intent )
         return sorted( intents )
 
+    # This method calculates the MultiPointToSinglePointIntent number installed
+    def extractActualRouteIntentNum( self, getIntentsResult ):
+        intentsJsonObj = json.loads( getIntentsResult )
+        num = 0
+        for intent in intentsJsonObj:
+            if intent[ 'type' ] == "MultiPointToSinglePointIntent" \
+            and intent[ 'state' ] == 'INSTALLED':
+                num = num + 1
+        return num
+
+    # This method calculates the PointToPointIntent number installed
+    def extractActualBgpIntentNum( self, getIntentsResult ):
+        intentsJsonObj = json.loads( getIntentsResult )
+        num = 0
+        for intent in intentsJsonObj:
+            if intent[ 'type' ] == "PointToPointIntent" \
+            and intent[ 'state' ] == 'INSTALLED':
+                num = num + 1
+        return num
+
     # This method extracts all actual BGP intents from ONOS CLI
     def extractActualBgpIntents( self, getIntentsResult ):
         intents = []
@@ -238,8 +268,8 @@ class QuaggaCliDriver( CLI ):
         intentsJsonObj = json.loads( getIntentsResult )
 
         for intent in intentsJsonObj:
-            if intent[ 'appId' ] != "org.onosproject.sdnip":
-                continue
+            #if intent[ 'appId' ] != "org.onosproject.sdnip":
+            #    continue
             if intent[ 'type' ] == "PointToPointIntent" \
             and "protocol=6" in str( intent[ 'selector' ] ):
                 ingress = str( intent[ 'ingress' ][ 'device' ] ) + ":" \
@@ -351,7 +381,7 @@ class QuaggaCliDriver( CLI ):
         chunk_size = 20
 
         if len(routes) > chunk_size:
-            num_iter = (int) (len(routes) / chunk_size) 
+            num_iter = (int) (len(routes) / chunk_size)
         else:
             num_iter = 1;
 
@@ -373,7 +403,7 @@ class QuaggaCliDriver( CLI ):
             except Exception:
                 main.log.warn( "Failed to add route" )
                 self.disconnect()
-            
+
             # waitTimer = 1.00 / routeRate
             main.log.info("Total routes so far " + ((str) (total)) + " wait for 0 sec")
             #time.sleep( 1 )
@@ -489,7 +519,7 @@ class QuaggaCliDriver( CLI ):
         if routesAdded == numRoutes:
             return main.TRUE
         return main.FALSE
-    
+
     # Please use deleteRoutes method instead of this one!
     def delRoute( self, net, numRoutes, routeRate ):
         try:
@@ -562,7 +592,7 @@ class QuaggaCliDriver( CLI ):
             child.expect( "Flow table show" )
             count = 0
             while True:
-                i = child.expect( [ '17\d\.\d{1,3}\.\d{1,3}\.\d{1,3}', 
+                i = child.expect( [ '17\d\.\d{1,3}\.\d{1,3}\.\d{1,3}',
                                    'CLI#', pexpect.TIMEOUT ] )
                 if i == 0:
                     count = count + 1

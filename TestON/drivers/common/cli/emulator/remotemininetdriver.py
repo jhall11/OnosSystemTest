@@ -24,7 +24,7 @@ MininetCliDriver is the basic driver which will handle the Mininet functions
 import pexpect
 import re
 import sys
-sys.path.append( "../" )
+import os
 from drivers.common.cli.emulatordriver import Emulator
 
 
@@ -51,6 +51,22 @@ class RemoteMininetDriver( Emulator ):
             vars( self )[ key ] = connectargs[ key ]
 
         self.name = self.options[ 'name' ]
+
+        try:
+            if os.getenv( str( self.ip_address ) ) != None:
+                self.ip_address = os.getenv( str( self.ip_address ) )
+            else:
+                main.log.info( self.name +
+                               ": Trying to connect to " +
+                               self.ip_address )
+
+        except KeyError:
+            main.log.info( "Invalid host name," +
+                           " connecting to local host instead" )
+            self.ip_address = 'localhost'
+        except Exception as inst:
+            main.log.error( "Uncaught exception: " + str( inst ) )
+
         self.handle = super(
             RemoteMininetDriver,
             self ).connect(
@@ -91,6 +107,7 @@ class RemoteMininetDriver( Emulator ):
         elif re.search( "found multiple mininet", outputs ):
             return main.ERROR
         else:
+            # TODO: Parse for failed pings, give some truncated output
             main.log.error( "Error, unexpected output in the ping file" )
             main.log.warn( outputs )
             return main.TRUE
@@ -277,7 +294,7 @@ class RemoteMininetDriver( Emulator ):
             self,
             filename,
             intf="eth0",
-            port="port 6633",
+            port="port 6653",
             user="admin" ):
         """
         Runs tcpdump on an interface and saves the file
@@ -344,29 +361,48 @@ class RemoteMininetDriver( Emulator ):
             main.cleanup()
             main.exit()
 
-    def runOpticalMnScript( self, ctrllerIP = None ):
+    def runOpticalMnScript( self,name = 'onos', ctrllerIP = None ):
         import time
+        import types
         """
-            This function is only meant for Packet Optical.
-            It runs python script "opticalTest.py" to create the
-            packet layer( mn ) and optical topology
-            
-            TODO: If no ctrllerIP is provided, a default 
+            Description:
+                This function is only meant for Packet Optical.
+                It runs python script "opticalTest.py" to create the
+                packet layer( mn ) and optical topology
+            Optional:
+                name - Name of onos directory. (ONOS | onos)
+            Required:
+                ctrllerIP = Controller(s) IP address
+            TODO: If no ctrllerIP is provided, a default
                 $OC1 can be accepted
         """
         try:
             self.handle.sendline( "" )
             self.handle.expect( "\$" )
-            self.handle.sendline( "cd ~/onos/tools/test/topos" )
+            self.handle.sendline( "cd ~/" + name + "/tools/test/topos" )
             self.handle.expect( "topos\$" )
             if ctrllerIP == None:
                 main.log.info( "You need to specify the IP" )
                 return main.FALSE
             else:
-                cmd = "sudo -E python opticalTest.py " + ctrllerIP
+                controller = ''
+                if isinstance( ctrllerIP, types.ListType ):
+                    for i in xrange( len( ctrllerIP ) ):
+                        controller += ctrllerIP[i] + ' '
+                    main.log.info( "Mininet topology is being loaded with " +
+                                   "controllers: " + controller )
+                elif isinstance( ctrllerIP, types.StringType ):
+                    controller = ctrllerIP
+                    main.log.info( "Mininet topology is being loaded with " +
+                                   "controller: " + controller )
+                else:
+                    main.log.info( "You need to specify a valid IP" )
+                    return main.FALSE
+                cmd = "sudo -E python opticalTest.py " + controller
+                main.log.info( self.name + ": cmd = " + cmd )
                 self.handle.sendline( cmd )
-                self.handle.expect( "Press ENTER to push Topology.json" )
-                time.sleep(15)
+                time.sleep(30)
+                self.handle.sendline( "" )
                 self.handle.sendline( "" )
                 self.handle.expect("mininet>")
                 return main.TRUE
@@ -403,8 +439,8 @@ class RemoteMininetDriver( Emulator ):
             # Close the ssh connection
             self.handle.sendline( "" )
             # self.handle.expect( "\$" )
-            i = self.handle.expect( [ '\$', 'mininet>', pexpect.TIMEOUT ],
-                                    timeout=2)
+            i = self.handle.expect( [ '\$', 'mininet>', pexpect.TIMEOUT,
+                                      pexpect.EOF ], timeout=2 )
             if i == 0:
                 self.handle.sendline( "exit" )
                 self.handle.expect( "closed" )
@@ -415,62 +451,9 @@ class RemoteMininetDriver( Emulator ):
                 self.handle.sendline( "exit" )
                 self.handle.expect( "exit" )
                 self.handle.expect( "closed" )
-                
         else:
             main.log.error( "Connection failed to the host" )
         return main.TRUE
-
-    def getFlowTable( self, protoVersion, sw ):
-        """
-         TODO document usage
-         TODO add option to look at cookies. ignoring them for now
-
-         print "get_flowTable(" + str( protoVersion ) +" " + str( sw ) +")"
-         NOTE: Use format to force consistent flow table output across
-         versions"""
-        self.handle.sendline( "cd" )
-        self.handle.expect( [ "\$", pexpect.EOF, pexpect.TIMEOUT ] )
-        if protoVersion == 1.0:
-            command = "sudo ovs-ofctl dump-flows " + sw + \
-                " -F OpenFlow10-table_id | awk '{OFS=\",\" ; print $1  $3  $6 \
-                $7  $8}' | cut -d ',' -f 2- | sort -n -k1 -r"
-            self.handle.sendline( command )
-            self.handle.expect( [ "k1 -r", pexpect.EOF, pexpect.TIMEOUT ] )
-            self.handle.expect(
-                [ "OFPST_FLOW", pexpect.EOF, pexpect.TIMEOUT ] )
-            response = self.handle.before
-            # print "response=", response
-            return response
-        elif protoVersion == 1.3:
-            command = "sudo ovs-ofctl dump-flows " + sw + \
-                " -O OpenFlow13  | awk '{OFS=\",\" ; print $1  $3  $6  $7}'\
-                | cut -d ',' -f 2- | sort -n -k1 -r"
-            self.handle.sendline( command )
-            self.handle.expect( [ "k1 -r", pexpect.EOF, pexpect.TIMEOUT ] )
-            self.handle.expect(
-                [ "OFPST_FLOW", pexpect.EOF, pexpect.TIMEOUT ] )
-            response = self.handle.before
-            # print "response=", response
-            return response
-        else:
-            main.log.error(
-                "Unknown  protoVersion in get_flowTable(). given: (" +
-                str(
-                    type( protoVersion ) ) +
-                ") '" +
-                str( protoVersion ) +
-                "'" )
-
-    def flowComp( self, flow1, flow2 ):
-        if flow1 == flow2:
-            return main.TRUE
-        else:
-            main.log.info( "Flow tables do not match, printing tables:" )
-            main.log.info( "Flow Table 1:" )
-            main.log.info( flow1 )
-            main.log.info( "Flow Table 2:" )
-            main.log.info( flow2 )
-            return main.FALSE
 
     def setIpTablesOUTPUT( self, dstIp, dstPort, action='add',
                            packetType='tcp', rule='DROP' ):

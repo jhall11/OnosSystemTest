@@ -14,7 +14,7 @@ Created on 03-Dec-2012
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with TestON.  If not, see <http://www.gnu.org/licenses/>.		
+    along with TestON.  If not, see <http://www.gnu.org/licenses/>.
 
 '''
 
@@ -37,7 +37,7 @@ def xml_to_dict(root_or_str, strict=True):
         root = ElementTree.XML(root_or_str)
     try :
         return {root.tag: _from_xml(root, strict)}
-    except Exception:
+    except StandardError:
         return None
 
 def dict_to_xml(dict_xml):

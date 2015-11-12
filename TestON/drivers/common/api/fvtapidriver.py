@@ -35,7 +35,6 @@ import os
 import signal
 import re
 import sys
-sys.path.append( "../" )
 from common.apidriver import API
 import logging
 
@@ -57,7 +56,7 @@ config_default = {
     "fv_cmd": "/home/openflow/flowvisor/scripts/flowvisor.sh",
     "platform": "local",
     "controller_host": "127.0.0.1",
-    "controller_port": 6633,
+    "controller_port": 6653,
     "timeout": 3,
     "port_count": 4,
     "base_of_port": 1,

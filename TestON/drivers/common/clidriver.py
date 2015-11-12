@@ -23,14 +23,7 @@ author:s: Anil Kumar ( anilkumar.s@paxterrasolutions.com ),
 
 """
 import pexpect
-import struct
-import fcntl
-import os
-import sys
-import signal
-import sys
 import re
-sys.path.append( "../" )
 
 from drivers.component import Component
 
@@ -80,31 +73,38 @@ class CLI( Component ):
         i = 5
         while i == 5:
             i = self.handle.expect( [
-				    ssh_newkey,
-                                    'password:',
+                                    ssh_newkey,
+                                    'password:|Password:',
                                     pexpect.EOF,
                                     pexpect.TIMEOUT,
                                     refused,
                                     'teston>',
                                     '>|#|\$' ],
-                		    120 )
-            if i == 0:
+                            120 )
+            if i == 0:  # Accept key, then expect either a password prompt or access
                 main.log.info( "ssh key confirmation received, send yes" )
                 self.handle.sendline( 'yes' )
-                i = self.handle.expect(
-                    [ ssh_newkey, 'password:', pexpect.EOF ] )
-            if i == 1:
+                i = 5  # Run the loop again
+                continue
+            if i == 1:  # Password required
                 if self.pwd:
                     main.log.info(
-                        "ssh connection asked for password, gave password" )
-                    self.handle.sendline( self.pwd )
-                    self.handle.expect( '>|#|\$' )
+                    "ssh connection asked for password, gave password" )
                 else:
-                    # FIXME: TestON does not support a username having no
-                    #        password
-                    main.log.error( "Server asked for password, but none was "
-                                    "given in the .topo file" )
-                    main.exit()
+                    main.log.info( "Server asked for password, but none was "
+                                    "given in the .topo file. Trying "
+                                    "no password.")
+                    self.pwd = ""
+                self.handle.sendline( self.pwd )
+                j = self.handle.expect( [
+                                        '>|#|\$',
+                                        'password:|Password:',
+                                        pexpect.EOF,
+                                        pexpect.TIMEOUT ],
+                                        120 )
+                if j != 0:
+                    main.log.error( "Incorrect Password" )
+                    return main.FALSE
             elif i == 2:
                 main.log.error( "Connection timeout" )
                 return main.FALSE
@@ -145,12 +145,11 @@ class CLI( Component ):
         """
         result = super( CLI, self ).execute( self )
         defaultPrompt = '.*[$>\#]'
-        args = utilities.parse_args( [
-				     "CMD",
-                                     "TIMEOUT",
-                                     "PROMPT",
-                                     "MORE" ],
-            			     **execparams )
+        args = utilities.parse_args( [ "CMD",
+                                       "TIMEOUT",
+                                       "PROMPT",
+                                       "MORE" ],
+                                     **execparams )
 
         expectPrompt = args[ "PROMPT" ] if args[ "PROMPT" ] else defaultPrompt
         self.LASTRSP = ""
@@ -164,20 +163,18 @@ class CLI( Component ):
             args[ "MORE" ] = " "
         self.handle.sendline( cmd )
         self.lastCommand = cmd
-        index = self.handle.expect( [
-				    expectPrompt,
-                                    "--More--",
-                                    'Command not found.',
-                                    pexpect.TIMEOUT,
-                                    "^:$" ],
-            			    timeout=timeoutVar )
+        index = self.handle.expect( [ expectPrompt,
+                                      "--More--",
+                                      'Command not found.',
+                                      pexpect.TIMEOUT,
+                                      "^:$" ],
+                                    timeout=timeoutVar )
         if index == 0:
             self.LASTRSP = self.LASTRSP + \
                 self.handle.before + self.handle.after
-            main.log.info(
-                "Executed :" + str(
-                    cmd ) + " \t\t Expected Prompt '" + str(
-                        expectPrompt) + "' Found" )
+            main.log.info( "Executed :" + str(cmd ) +
+                           " \t\t Expected Prompt '" + str( expectPrompt) +
+                           "' Found" )
         elif index == 1:
             self.LASTRSP = self.LASTRSP + self.handle.before
             self.handle.send( args[ "MORE" ] )
@@ -196,26 +193,25 @@ class CLI( Component ):
             main.log.error( "Command not found" )
             self.LASTRSP = self.LASTRSP + self.handle.before
         elif index == 3:
-            main.log.error( "Expected Prompt not found , Time Out!!" )
+            main.log.error( "Expected Prompt not found, Time Out!!" )
             main.log.error( expectPrompt )
-            return "Expected Prompt not found , Time Out!!"
-
+            self.LASTRSP = self.LASTRSP + self.handle.before
+            return self.LASTRSP
         elif index == 4:
             self.LASTRSP = self.LASTRSP + self.handle.before
             # self.handle.send( args[ "MORE" ] )
             self.handle.sendcontrol( "D" )
             main.log.info(
-                "Found More screen to go , Sending a key to proceed" )
+                "Found More screen to go, Sending a key to proceed" )
             indexMore = self.handle.expect(
                 [ "^:$", expectPrompt ], timeout=timeoutVar )
             while indexMore == 0:
                 main.log.info(
-                    "Found another More screen to go , Sending a key to proceed" )
+                    "Found another More screen to go, Sending a key to proceed" )
                 self.handle.sendcontrol( "D" )
                 indexMore = self.handle.expect(
                     [ "^:$", expectPrompt ], timeout=timeoutVar )
                 self.LASTRSP = self.LASTRSP + self.handle.before
-
         main.last_response = self.remove_contol_chars( self.LASTRSP )
         return self.LASTRSP
 
@@ -232,7 +228,7 @@ class CLI( Component ):
         i = handle.expect( [ ".ssword:*", default, pexpect.EOF ] )
         if i == 0:
             handle.sendline( pwd )
-            handle.sendline( "\r" )
+            handle.sendline( "\n" )
 
         if i == 1:
             handle.expect( default )
@@ -252,61 +248,100 @@ class CLI( Component ):
                     prompt="(.*)",
                     timeout=120 )
 
-    def secureCopy( self, user_name, ip_address, filepath, pwd, dst_path ):
-
-        # scp openflow@192.168.56.101:/home/openflow/sample
-        # /home/paxterra/Desktop/
+    def secureCopy( self, userName, ipAddress, filePath, dstPath, pwd="",
+                    direction="from" ):
         """
-           Connection will establish to the remote host using ssh.
-           It will take user_name ,ip_address and password as arguments<br>
-           and will return the handle.
+        Definition:
+            Execute scp command in linux to copy to/from a remote host
+        Required:
+            str userName - User name of the remote host
+            str ipAddress - IP address of the remote host
+            str filePath - File path including the file it self
+            str dstPath - Destination path
+        Optional:
+            str pwd - Password of the host
+            str direction - Direction of the scp, default to "from" which means
+                            copy "from" the remote machine to local machine,
+                            while "to" means copy "to" the remote machine from
+                            local machine
         """
+        returnVal = main.TRUE
         ssh_newkey = 'Are you sure you want to continue connecting'
         refused = "ssh: connect to host " + \
-            ip_address + " port 22: Connection refused"
-        
-	cmd = 'scp ' + str( user_name ) + '@' + str( ip_address ) + ':' + \
-	      str( filepath ) + ' ' + str(dst_path )
+                  ipAddress + " port 22: Connection refused"
+
+        if direction == "from":
+            cmd = 'scp ' + str( userName ) + '@' + str( ipAddress ) + ':' + \
+                  str( filePath ) + ' ' + str( dstPath )
+        elif direction == "to":
+            cmd = 'scp ' + str( filePath ) + ' ' + str( userName ) + \
+                  '@' + str( ipAddress ) + ':' + str( dstPath )
+        else:
+            main.log.debug( "Wrong direction using secure copy command!" )
+            return main.FALSE
 
         main.log.info( "Sending: " + cmd )
-        self.handle = pexpect.spawn( cmd )
-        i = self.handle.expect( [
-				ssh_newkey,
-                              	'password:',
-                              	pexpect.EOF,
-                              	pexpect.TIMEOUT,
-                              	refused ],
-            			120 )
+        self.handle.sendline( cmd )
+        i = 0
+        while i < 2:
+            i = self.handle.expect( [
+                                ssh_newkey,
+                                'password:',
+                                "100%",
+                                refused,
+                                "No such file or directory",
+                                pexpect.EOF,
+                                pexpect.TIMEOUT ],
+                                120 )
+            if i == 0:  # ask for ssh key confirmation
+                main.log.info( "ssh key confirmation received, sending yes" )
+                self.handle.sendline( 'yes' )
+            elif i == 1:  # Asked for ssh password
+                main.log.info( "ssh connection asked for password, gave password" )
+                self.handle.sendline( pwd )
+            elif i == 2:  # File finished transfering
+                main.log.info( "Secure copy successful" )
+                returnVal = main.TRUE
+            elif i == 3:  # Connection refused
+                main.log.error(
+                    "ssh: connect to host " +
+                    ipAddress +
+                    " port 22: Connection refused" )
+                returnVal = main.FALSE
+            elif i == 4:  # File Not found
+                main.log.error( "No such file found" )
+                returnVal = main.FALSE
+            elif i == 5:  # EOF
+                main.log.error( "Pexpect.EOF found!!!" )
+                main.cleanup()
+                main.exit()
+            elif i == 6:  # timeout
+                main.log.error(
+                    "No route to the Host " +
+                    userName +
+                    "@" +
+                    ipAddress )
+                returnVal = main.FALSE
+        self.handle.expect( "\$" )
+        return returnVal
 
-        if i == 0:
-            main.log.info( "ssh key confirmation received, send yes" )
-            self.handle.sendline( 'yes' )
-            i = self.handle.expect( [ ssh_newkey, 'password:', pexpect.EOF ] )
-        if i == 1:
-            main.log.info( "ssh connection asked for password, gave password" )
-            self.handle.sendline( pwd )
-            # self.handle.expect( user_name )
-
-        elif i == 2:
-            main.log.error( "Connection timeout" )
-            pass
-        elif i == 3:  # timeout
-            main.log.error(
-                "No route to the Host " +
-                user_name +
-                "@" +
-                ip_address )
-            return main.FALSE
-        elif i == 4:
-            main.log.error(
-                "ssh: connect to host " +
-                ip_address +
-                " port 22: Connection refused" )
-            return main.FALSE
-
-        self.handle.sendline( "" )
-        self.handle.expect( "$" )
-        print self.handle.before
-
-        return self.handle
-
+    def scp( self, remoteHost, filePath, dstPath, direction="from" ):
+        """
+        Definition:
+            Execute scp command in linux to copy to/from a remote host
+        Required:
+            * remoteHost - Test ON component to be parsed
+            str filePath - File path including the file it self
+            str dstPath - Destination path
+        Optional:
+            str direction - Direction of the scp, default to "from" which means
+                            copy "from" the remote machine to local machine,
+                            while "to" means copy "to" the remote machine from
+                            local machine
+        """
+        return self.secureCopy( remoteHost.user_name,
+                                remoteHost.ip_address,
+                                filePath,
+                                dstPath,
+                                pwd=remoteHost.pwd,
+                                direction=direction )

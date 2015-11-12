@@ -25,7 +25,6 @@ import pexpect
 import struct
 import fcntl
 import os
-import sys
 import signal
 import sys
 from drivers.common.cli.emulatordriver import Emulator
@@ -58,15 +57,7 @@ class PoxCliDriver( Emulator ):
         self.name = self.options[ 'name' ]
 
         poxLibPath = 'default'
-        copy = super(
-            PoxCliDriver,
-            self ).secureCopy(
-            self.user_name,
-            self.ip_address,
-            '/home/openflow/pox/pox/core.py',
-            self.pwd,
-            path +
-            '/lib/pox/' )
+
         self.handle = super(
             PoxCliDriver,
             self ).connect(
