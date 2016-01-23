@@ -1,5 +1,6 @@
 <PARAMS>
-    <testcases> 1</testcases>
+    <testcases>2,3,4,5</testcases>
+    <ControllerIP>127.0.0.1</ControllerIP>
     <CASE1>
     </CASE1>
 </PARAMS>

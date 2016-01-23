@@ -28,7 +28,8 @@ class ConformanceTest :
         # TODO: Assert here
         main.case("Testing Controller compatibility")
 	
-        main.log.warn("Make sure your controller is running and listening for Switch connections!")
+        main.log.warn("Make sure your controller is running and" +
+                      "listening for Switch connections!")
 
         main.step("Start fake switch")
         main.FakeSwitch1.createSwitch()
@@ -46,6 +47,8 @@ class ConformanceTest :
         import drivers.common.api.oftest.message as message
         main.FakeSwitch1.createSwitch()
         main.FakeSwitch1.startSwitch() #includes Hello's
+        ip = main.params[ "ControllerIP" ]
+        main.ControllerCli1.startOnosCli( ip )
         main.case("CONF 1.1 - Features Request")
         main.step("Connecting to switch")
         #main.FakeSwitch1.handshake_loop()
@@ -58,13 +61,15 @@ class ConformanceTest :
                 break
             if parsedM.header.type == 5:
             #Features Request
-                reply = testutils.genFeaturesReply(ports=main.FakeSwitch1.ports, dpid=main.FakeSwitch1.dpid)
+                reply = testutils.genFeaturesReply(ports=main.FakeSwitch1.ports,
+                                                   dpid=main.FakeSwitch1.dpid)
                 reply.header.xid = parsedM.header.xid
                 send_msg = reply.pack()
                 main.FakeSwitch1.sw.send(send_msg)
                 main.log.info( "Sent switch_features to controller" )
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) )
                 fruit = main.TRUE
                 #TODO: parsedM has no data/body attribute. Is this checked or ignored by oftest?
                 break
@@ -77,7 +82,8 @@ class ConformanceTest :
                 send_msg = reply.pack()
                 main.FakeSwitch1.sw.send(send_msg)
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) )
             count = count + 1
         utilities.assert_equals(expect=main.TRUE,actual=fruit,
                 onpass="Controller sends Features Request on connect",
@@ -137,20 +143,23 @@ class ConformanceTest :
                 send_msg = reply.pack()
                 main.FakeSwitch1.sw.send(send_msg)
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) )
             elif parsedM.header.type == 5:
             #Features Request
                 #nPorts=4
                 #ports = []
                 #for dataport in range(nPorts):
                 #        ports.append(dataport)
-                reply = testutils.genFeaturesReply(ports=main.FakeSwitch1.ports, dpid=main.FakeSwitch1.dpid)
+                reply = testutils.genFeaturesReply(ports=main.FakeSwitch1.ports,
+                                                   dpid=main.FakeSwitch1.dpid)
                 reply.header.xid = parsedM.header.xid
                 send_msg = reply.pack()
                 main.FakeSwitch1.sw.send(send_msg)
                 main.log.info( "Sent switch_features to controller" )
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) )
 
             if fruit == main.TRUE:
                 break
@@ -186,7 +195,8 @@ class ConformanceTest :
                 main.log.info( "Sending Get Config Reply" )
                 main.FakeSwitch1.sw.send(send_msg)
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) )
                 fruit = main.TRUE
                 #TODO: parsedM has no data/body attribute. Is this checked or ignored by oftest?
                 break
@@ -199,16 +209,19 @@ class ConformanceTest :
                 send_msg = reply.pack()
                 main.FakeSwitch1.sw.send(send_msg)
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) )
             elif parsedM.header.type == 5:
             #Features Request
-                reply = testutils.genFeaturesReply(ports=main.FakeSwitch1.ports, dpid=main.FakeSwitch1.dpid)
+                reply = testutils.genFeaturesReply(ports=main.FakeSwitch1.ports,
+                                                   dpid=main.FakeSwitch1.dpid)
                 reply.header.xid = parsedM.header.xid
                 send_msg = reply.pack()
                 main.FakeSwitch1.sw.send(send_msg)
                 main.log.info( "Sent switch_features to controller" )
                 if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) ) 
+                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                                    testutils._pktParse(send_msg) ) 
              
 
             count = count + 1
@@ -219,11 +232,16 @@ class ConformanceTest :
     def CASE5(self,main):
         import drivers.common.api.testutils as testutils
         import drivers.common.api.oftest.message as message
+        import drivers.common.api.oftest.cstruct as cstruct 
+        import numpy
+        import json
         main.FakeSwitch1.createSwitch()
         main.FakeSwitch1.startSwitch() #includes Hello's
         main.case("CONF 1.4a - Flow mod: proactive add")
         #NOTE this test is limited by controller API's
-        main.step("Addign a flow to the switch")
+        #TODO: poke controller to add a flow
+        #NOTE: ONOS adds some flows for link discovery and such on connection
+        main.step("Adding a flow to the switch")
         main.FakeSwitch1.handshake_loop()
         fruit = main.FALSE
         #TODO: For values in flow mod fields, loop through controller api to send flow mods to the switch and check if values sent = values told to controller
@@ -233,28 +251,76 @@ class ConformanceTest :
         #TODO check buffer_id
         #TODO check cookie
         count = 0
-        while count < 10:
+        #Clear the queue
+        while count < 20:
+            parsedM = main.FakeSwitch1.receiver()
+            count += 1
+        # NOTE: ONOS specific commands
+        devices = main.ControllerCli1.devices()
+        try:
+            parsed = json.loads( devices )
+            for device in parsed:
+                main.log.warn( device[ 'available' ] )
+                if device[ 'available' ] == True:
+                    deviceId = device[ 'id' ]
+                    break
+            deviceId
+        except Exception as e:
+            main.log.error( "Error getting device id:" )
+            main.log.exception( e )
+        addCmd = main.ControllerCli1.addPointIntent( ingressDevice=deviceId,
+                                                     egressDevice=deviceId,
+                                                     portIngress="0",
+                                                     portEgress="1" )
+        if addCmd is None:
+            addResult = main.FALSE
+        else:
+            addResult = main.TRUE
+        utilities.assert_equals(expect=main.TRUE,actual=addResult,
+                onpass="Using Controller API to send a flow",
+                onfail="Error in using Controller API")
+        
+        main.step( "Check flow mod message" )
+        count = 0
+        while count < 20:
             parsedM = main.FakeSwitch1.receiver()
             if parsedM == None:
                 main.log.error("Did not receive a message")
                 break
+            else:
+                main.log.debug("New msg of type " + str(parsedM.header.type) +
+                               ": " + cstruct.ofp_type_map[parsedM.header.type] )
             if parsedM.header.type == 14:
              #flow_mod
+                main.log.warn( parsedM.show() )
+                main.log.error("Bearing fruit?")
+                main.log.debug( parsedM.command ) # == OFPFC_ADD?
+                if parsedM.command == cstruct.OFPFC_ADD:
+                    #flow mod using flow add
+                    fruit = main.TRUE
+                    if parsedM.cookie == numpy.uint64(-1):
+                        main.log.error( "Cookie is -1" )
+                        fruit = main.FALSE
+                    if parsedM.buffer_id != numpy.uint32(-1):
+                        main.log.error( "buffer_id is not -1" )
+                        fruit = main.FALSE
+                # FIXME: Technically these are signed ints
+                if parsedM.match.in_port == 0: # This is what we sent
+                    if parsedM.out_port != 1:
+                        fruit = main.FALSE
+                else:
+                    fruit = main.FALSE
+                if fruit == main.TRUE:
+                    break
 
-                fruit = main.TRUE
-                break
             elif parsedM.header.type == 2:
             #echo Request
-                reply = message.echo_reply()
-                reply.data = parsedM.data
-                main.log.info( reply.data )
-                reply.header.xid = parsedM.header.xid
-                send_msg = reply.pack()
-                main.FakeSwitch1.sw.send(send_msg)
-                if main.FakeSwitch1.DEBUG:
-                    main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" + testutils._pktParse(send_msg) )
+                main.FakeSwitch1.echo( parsedM )
+            elif parsedM.header.type == 16:
+            #stats request
+                main.FakeSwitch1.stats_reply( parsedM )
             count = count + 1
         utilities.assert_equals(expect=main.TRUE,actual=fruit,
                 onpass="Recieved Flow Mod: add from the controller",
-                onfail="Incorrect flow mod message from the controller")
+                onfail="Incorrect/No flow mod message from the controller")
          

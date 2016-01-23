@@ -49,7 +49,7 @@ class Component( object ):
             if "'module' object has no attribute '__path__'" in error:
                 pass
             else:
-                main.log.error( self.name + ": " + str(error.__class__) + " " + str(error) )
+                main.log.exception( error )
             try:
                 def experimentHandling( *args, **kwargs ):
                     if main.EXPERIMENTAL_MODE == main.TRUE:

@@ -101,12 +101,13 @@ class FakeSwitchDriver(API):
             print "Returning from receiver"
         return parsedM
 
-    def handshake_loop(self):
+    def handshake_loop(self, pktCount=20):
         '''
         Completes the OpenFlow handshake
         '''
-        #TODO: have reciever in here as a loop?
-        while 1: 
+        count = 0
+        while count < pktCount: 
+            count += 1
             parsedM = self.receiver()
             if parsedM == None:
                 return False
@@ -126,6 +127,8 @@ class FakeSwitchDriver(API):
             elif oftype == 2:
             #echo Request
                 main.log.debug( "Echo Request received" )
+                self.echo( parsedM )
+                '''
                 reply = message.echo_reply()
                 reply.data = parsedM.data
                 print reply.data
@@ -136,7 +139,8 @@ class FakeSwitchDriver(API):
                 if self.DEBUG:
                     print "Sent: \n"+ testutils._b2a(send_msg) 
                     print testutils._pktParse(send_msg)
-                ######################################################################################################################break
+                '''
+                break
             elif oftype == 3:
             #Echo Reply
                 main.log.debug( "Echo Reply received" )
@@ -240,28 +244,12 @@ class FakeSwitchDriver(API):
             elif oftype == 16:
             #stats request
                 main.log.debug( "Stats Request received" )
-                reply = message.stats_reply()
-                reply.flags = 0
-                reply.body = message.ofp_desc_stats
-                reply.body.mfr_desc = "Jon Hall Switches"
-                reply.body.hw_desc = "Fake Switch"
-                reply.body.sw_desc = "1.0"
-                reply.body.serial_num = "1"
-                reply.body.dp_desc = "A Switch... or is it?"
-                reply.header.xid = parsedM.header.xid
-                reply.header.length = 1068
-                send_msg = reply.pack()
-                self.sw.send(send_msg)
-                main.log.debug( "Stats Reply sent" )
-                main.log.warn( reply.show() )
-                if self.DEBUG:
-                    print "Sent: \n"+ testutils._b2a(send_msg) 
-                    print testutils._pktParse(send_msg)
+                self.stats_reply( parsedM )
             elif oftype == 17:
             #stats reply
                 main.log.debug( "Stats Reply received" )
                 print "doing nothing with this packet"
-                pass#TODO: implement
+                pass#Switch shouldn't be receiving this
             elif oftype == 18:
             #barrier request
                 main.log.debug( "Barrier Request received" )
@@ -279,7 +267,7 @@ class FakeSwitchDriver(API):
                 print "doing nothing with this packet"
                 pass#TODO: implement
             else: 
-                print "GOT UNKNOWN OFTYPE"
+                main.log.error( "GOT UNKNOWN OFTYPE" )
                 print "doing nothing with this packet"
             #print testutils._b2a(m)
             #print m.type()
@@ -288,30 +276,62 @@ class FakeSwitchDriver(API):
 	if self.DEBUG:
             print "End handshake"
     
-    def echo(self):
+    def echo(self, parsedM):
         '''
         Echo Function handles of echo messages
         '''
-        if oftype == 2:
+        if parsedM.header.type == 2:
         #echo Request
-        #don't forget to copy data
-
             reply = message.echo_reply()
             reply.data = parsedM.data
-            print reply.data
+            main.log.info( reply.data )
             reply.header.xid = parsedM.header.xid
             send_msg = reply.pack()
             self.sw.send(send_msg)
-            if self.DEBUG:
-                print "Sent: \n"+ testutils._b2a(send_msg) 
-                print testutils._pktParse(send_msg)
-        elif oftype == 3:
-        #Echo Reply
-            print "doing nothing with this packet"
-            return True#TODO: implement
-            
+            main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) + "\n" +
+                            testutils._pktParse(send_msg) )
+        else:
+            #Error
+            #TODO: implement this
+            return
 
-
+    def stats_reply(self, parsedM):
+        '''
+        This function handles responding to stats requests
+        '''
+        #TODO: respond with real data for stats?
+        #Check for the type of stats request
+        if parsedM.type == ofp.OFPST_DESC:
+            reply = message.desc_stats_reply()
+            desc = ofp.ofp_desc_stats()
+            desc.mfr_desc = "Jon Hall Switches"
+            desc.hw_desc = "Fake Switch"
+            desc.sw_desc = "1.0"
+            desc.serial_num = "1"
+            desc.dp_desc = "A Switch... or is it?"
+            reply.stats.append( desc )
+        elif parsedM.type == ofp.OFPST_FLOW:
+            reply = message.flow_stats_reply()
+        elif parsedM.type == ofp.OFPST_AGGREGATE:
+            reply = message.aggregate_stats_reply()
+        elif parsedM.type == ofp.OFPST_TABLE:
+            reply = message.table_stats_reply()
+        elif parsedM.type == ofp.OFPST_PORT:
+            reply = message.port_stats_reply()
+        elif parsedM.type == ofp.OFPST_QUEUE:
+            reply = message.queue_stats_reply()
+        else:
+            # should be vendor only
+            #TODO: implement?
+            reply = message.ofp_stats_reply()
+        reply.header.xid = parsedM.header.xid
+        reply.flags = 0
+        send_msg = reply.pack()
+        self.sw.send(send_msg)
+        main.log.debug( "Stats Reply sent" )
+        main.log.warn( reply.show() )
+        main.log.debug( "Sent: \n"+ testutils._b2a(send_msg) +
+                        "\n" + testutils._pktParse(send_msg) )
     '''
     def disconnect(self):
         #for cont in self.contList:
