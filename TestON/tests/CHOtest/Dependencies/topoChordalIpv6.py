@@ -27,7 +27,6 @@ class chordalTopo( Topo ):
         # Initialize Topology
         Topo.__init__( self, **opts )
 
-        # add nodes, switches first...
         s1 = self.addSwitch( 's1' )
         s2 = self.addSwitch( 's2' )
         s3 = self.addSwitch( 's3' )

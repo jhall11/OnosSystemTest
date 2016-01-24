@@ -29,7 +29,6 @@ class attTopo( Topo ):
         # Initialize Topology
         Topo.__init__( self, **opts )
 
-        # add nodes, switches first...
         NY54 = self.addSwitch( 's1' )
         CMBR = self.addSwitch( 's2' )
         CHCG = self.addSwitch( 's3' )

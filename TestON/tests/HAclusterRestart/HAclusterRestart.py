@@ -48,6 +48,7 @@ class HAclusterRestart:
         start tcpdump
         """
         import imp
+        import time
         main.log.info( "ONOS HA test: Restart all ONOS nodes - " +
                          "initialization" )
         main.case( "Setting up test environment" )
@@ -181,10 +182,11 @@ class HAclusterRestart:
         #       index = The number of the graph under plot name
         job = "HAclusterRestart"
         plotName = "Plot-HA"
+        index = "1"
         graphs = '<ac:structured-macro ac:name="html">\n'
         graphs += '<ac:plain-text-body><![CDATA[\n'
         graphs += '<iframe src="https://onos-jenkins.onlab.us/job/' + job +\
-                  '/plot/' + plotName + '/getPlot?index=0' +\
+                  '/plot/' + plotName + '/getPlot?index=' + index +\
                   '&width=500&height=300"' +\
                   'noborder="0" width="500" height="300" scrolling="yes" ' +\
                   'seamless="seamless"></iframe>\n'
@@ -250,6 +252,7 @@ class HAclusterRestart:
                 port=main.params[ 'MNtcpdump' ][ 'port' ] )
 
         main.step( "App Ids check" )
+        time.sleep(60)
         appCheck = main.TRUE
         threads = []
         for i in range( main.numCtrls ):
@@ -1491,7 +1494,7 @@ class HAclusterRestart:
                 # FIXME: better handling of this, print which node
                 #        Maybe use thread name?
                 main.log.exception( "Error parsing json output of hosts" )
-                # FIXME: should this be an empty json object instead?
+                main.log.warn( repr( t.result ) )
                 hosts.append( None )
 
         ports = []
@@ -1537,7 +1540,7 @@ class HAclusterRestart:
         consistentHostsResult = main.TRUE
         for controller in range( len( hosts ) ):
             controllerStr = str( controller + 1 )
-            if "Error" not in hosts[ controller ]:
+            if hosts[ controller ] and "Error" not in hosts[ controller ]:
                 if hosts[ controller ] == hosts[ 0 ]:
                     continue
                 else:  # hosts not consistent
@@ -1564,11 +1567,12 @@ class HAclusterRestart:
         ipResult = main.TRUE
         for controller in range( 0, len( hosts ) ):
             controllerStr = str( controller + 1 )
-            for host in hosts[ controller ]:
-                if not host.get( 'ipAddresses', [ ] ):
-                    main.log.error( "DEBUG:Error with host ips on controller" +
-                                    controllerStr + ": " + str( host ) )
-                    ipResult = main.FALSE
+            if hosts[ controller ]:
+                for host in hosts[ controller ]:
+                    if not host.get( 'ipAddresses', [ ] ):
+                        main.log.error( "Error with host ips on controller" +
+                                        controllerStr + ": " + str( host ) )
+                        ipResult = main.FALSE
         utilities.assert_equals(
             expect=main.TRUE,
             actual=ipResult,
@@ -1653,7 +1657,7 @@ class HAclusterRestart:
                                      onfail="ONOS" + controllerStr +
                                      " links view is incorrect" )
 
-            if hosts[ controller ] or "Error" not in hosts[ controller ]:
+            if hosts[ controller ] and "Error" not in hosts[ controller ]:
                 currentHostsResult = main.Mininet1.compareHosts(
                         mnHosts,
                         hosts[ controller ] )
@@ -2060,18 +2064,13 @@ class HAclusterRestart:
         main.step( "Get the OF Table entries and compare to before " +
                    "component failure" )
         FlowTables = main.TRUE
-        flows2 = []
         for i in range( 28 ):
             main.log.info( "Checking flow table on s" + str( i + 1 ) )
-            tmpFlows = main.Mininet1.getFlowTable( "s" + str( i + 1 ), version="1.3" )
-            flows2.append( tmpFlows )
-            tempResult = main.Mininet1.flowComp(
-                flow1=flows[ i ],
-                flow2=tmpFlows )
-            FlowTables = FlowTables and tempResult
+            tmpFlows = main.Mininet1.getFlowTable( "s" + str( i + 1 ), version="1.3", debug=False )
+            FlowTables = FlowTables and main.Mininet1.flowTableComp( flows[i], tmpFlows )
             if FlowTables == main.FALSE:
-                main.log.info( "Differences in flow table for switch: s" +
-                               str( i + 1 ) )
+                main.log.warn( "Differences in flow table for switch: s{}".format( i + 1 ) )
+
         utilities.assert_equals(
             expect=main.TRUE,
             actual=FlowTables,
@@ -2154,15 +2153,13 @@ class HAclusterRestart:
         main.case( "Compare ONOS Topology view to Mininet topology" )
         main.caseExplanation = "Compare topology objects between Mininet" +\
                                 " and ONOS"
-
-        main.step( "Comparing ONOS topology to MN" )
         topoResult = main.FALSE
         elapsed = 0
         count = 0
-        main.step( "Collecting topology information from ONOS" )
+        main.step( "Comparing ONOS topology to MN topology" )
         startTime = time.time()
         # Give time for Gossip to work
-        while topoResult == main.FALSE and elapsed < 60:
+        while topoResult == main.FALSE and ( elapsed < 60 or count < 3 ):
             devicesResults = main.TRUE
             linksResults = main.TRUE
             hostsResults = main.TRUE
@@ -2185,9 +2182,11 @@ class HAclusterRestart:
             ipResult = main.TRUE
             threads = []
             for i in range( main.numCtrls ):
-                t = main.Thread( target=main.CLIs[i].hosts,
+                t = main.Thread( target=utilities.retry,
                                  name="hosts-" + str( i ),
-                                 args=[ ] )
+                                 args=[ main.CLIs[i].hosts, [ None ] ],
+                                 kwargs= { 'sleep': 5, 'attempts': 5,
+                                           'randomTime': True } )
                 threads.append( t )
                 t.start()
 
@@ -2198,14 +2197,16 @@ class HAclusterRestart:
                 except ( ValueError, TypeError ):
                     main.log.exception( "Error parsing hosts results" )
                     main.log.error( repr( t.result ) )
+                    hosts.append( None )
             for controller in range( 0, len( hosts ) ):
                 controllerStr = str( controller + 1 )
-                for host in hosts[ controller ]:
-                    if host is None or host.get( 'ipAddresses', [] ) == []:
-                        main.log.error(
-                            "DEBUG:Error with host ipAddresses on controller" +
-                            controllerStr + ": " + str( host ) )
-                        ipResult = main.FALSE
+                if hosts[ controller ]:
+                    for host in hosts[ controller ]:
+                        if host is None or host.get( 'ipAddresses', [] ) == []:
+                            main.log.error(
+                                "Error with host ipAddresses on controller" +
+                                controllerStr + ": " + str( host ) )
+                            ipResult = main.FALSE
             ports = []
             threads = []
             for i in range( main.numCtrls ):
@@ -2282,11 +2283,12 @@ class HAclusterRestart:
                                          " links view is correct",
                                          onfail="ONOS" + controllerStr +
                                          " links view is incorrect" )
-
-                if hosts[ controller ] or "Error" not in hosts[ controller ]:
+                if hosts[ controller ] and "Error" not in hosts[ controller ]:
                     currentHostsResult = main.Mininet1.compareHosts(
                             mnHosts,
                             hosts[ controller ] )
+                elif hosts[ controller ] == []:
+                    currentHostsResult = main.TRUE
                 else:
                     currentHostsResult = main.FALSE
                 utilities.assert_equals( expect=main.TRUE,
@@ -2327,7 +2329,7 @@ class HAclusterRestart:
                     elif i == 28:
                         deviceId = "2800".zfill(16)
                     mappings[ macId ] = deviceId
-                if hosts[ controller ] or "Error" not in hosts[ controller ]:
+                if hosts[ controller ] is not None and "Error" not in hosts[ controller ]:
                     if hosts[ controller ] == []:
                         main.log.warn( "There are no hosts discovered" )
                         noHosts = True
@@ -2388,6 +2390,11 @@ class HAclusterRestart:
                 topoResult = ( devicesResults and linksResults
                                and hostsResults and ipResult and
                                hostAttachmentResults )
+        utilities.assert_equals( expect=True,
+                                 actual=topoResult,
+                                 onpass="ONOS topology matches Mininet",
+                                 onfail="ONOS topology don't match Mininet" )
+        # End of While loop to pull ONOS state
 
         # Compare json objects for hosts and dataplane clusters
 
@@ -2396,7 +2403,7 @@ class HAclusterRestart:
         consistentHostsResult = main.TRUE
         for controller in range( len( hosts ) ):
             controllerStr = str( controller + 1 )
-            if "Error" not in hosts[ controller ]:
+            if hosts[ controller ] is not None and "Error" not in hosts[ controller ]:
                 if hosts[ controller ] == hosts[ 0 ]:
                     continue
                 else:  # hosts not consistent
@@ -2520,26 +2527,23 @@ class HAclusterRestart:
             t.join()
             nodesOutput.append( t.result )
         ips = [ node.ip_address for node in main.nodes ]
+        ips.sort()
         for i in nodesOutput:
             try:
                 current = json.loads( i )
+                activeIps = []
+                currentResult = main.FALSE
                 for node in current:
-                    currentResult = main.FALSE
-                    if node['ip'] in ips:  # node in nodes() output is in cell
-                        if node['state'] == 'ACTIVE':
-                            currentResult = main.TRUE
-                        else:
-                            main.log.error( "Error in ONOS node availability" )
-                            main.log.error(
-                                    json.dumps( current,
-                                                sort_keys=True,
-                                                indent=4,
-                                                separators=( ',', ': ' ) ) )
-                            break
-                    nodeResults = nodeResults and currentResult
+                    if node['state'] == 'ACTIVE':
+                        activeIps.append( node['ip'] )
+                activeIps.sort()
+                if ips == activeIps:
+                    currentResult = main.TRUE
             except ( ValueError, TypeError ):
                 main.log.error( "Error parsing nodes output" )
                 main.log.warn( repr( i ) )
+                currentResult = main.FALSE
+            nodeResults = nodeResults and currentResult
         utilities.assert_equals( expect=main.TRUE, actual=nodeResults,
                                  onpass="Nodes check successful",
                                  onfail="Nodes check NOT successful" )

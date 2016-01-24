@@ -27,7 +27,6 @@ class CHOtest:
 
         global intentState
         main.threadID = 0
-        main.pingTimeout = 300
         main.numCtrls = main.params[ 'CTRL' ][ 'numCtrl' ]
         git_pull = main.params[ 'GIT' ][ 'autoPull' ]
         git_branch = main.params[ 'GIT' ][ 'branch' ]
@@ -36,8 +35,13 @@ class CHOtest:
         main.failSwitch = main.params['TEST']['pauseTest']
         main.emailOnStop = main.params['TEST']['email']
         main.intentCheck = int( main.params['TEST']['intentChecks'] )
+        main.topoCheck = int( main.params['TEST']['topoChecks'] )
         main.numPings = int( main.params['TEST']['numPings'] )
         main.pingSleep = int( main.params['timers']['pingSleep'] )
+        main.topoCheckDelay = int( main.params['timers']['topoCheckDelay'] )
+        main.pingTimeout = int( main.params['timers']['pingTimeout'] )
+        main.remHostDelay = int( main.params['timers']['remHostDelay'] )
+        main.remDevDelay = int( main.params['timers']['remDevDelay'] )
         main.newTopo = ""
         main.CLIs = []
 
@@ -61,7 +65,7 @@ class CHOtest:
         else:
             main.log.error( "Please provide onoscell option at TestON CLI to run CHO tests" )
             main.log.error( "Example: ~/TestON/bin/cli.py run OnosCHO onoscell <cellName>" )
-            main.clean()
+            main.cleanup()
             main.exit()
 
         main.step( "Git checkout and pull " + git_branch )
@@ -175,21 +179,17 @@ class CHOtest:
         import time
         import copy
 
+        main.prefix = 0
+
         main.numMNswitches = int ( main.params[ 'TOPO1' ][ 'numSwitches' ] )
         main.numMNlinks = int ( main.params[ 'TOPO1' ][ 'numLinks' ] )
         main.numMNhosts = int ( main.params[ 'TOPO1' ][ 'numHosts' ] )
-        main.pingTimeout = 300
         main.log.report(
             "Load Att topology and Balance all Mininet switches across controllers" )
         main.log.report(
             "________________________________________________________________________" )
         main.case(
             "Assign and Balance all Mininet switches across controllers" )
-
-        main.step( "Stop any previous Mininet network topology" )
-        cliResult = main.TRUE
-        if main.newTopo == main.params['TOPO3']['topo']:
-            stopStatus = main.Mininet1.stopNet( fileName = "topoSpine" )
 
         main.step( "Start Mininet with Att topology" )
         main.newTopo = main.params['TOPO1']['topo']
@@ -243,20 +243,18 @@ class CHOtest:
         import time
         import copy
 
+        main.prefix = 1
+
         main.newTopo = main.params['TOPO2']['topo']
         main.numMNswitches = int ( main.params[ 'TOPO2' ][ 'numSwitches' ] )
         main.numMNlinks = int ( main.params[ 'TOPO2' ][ 'numLinks' ] )
         main.numMNhosts = int ( main.params[ 'TOPO2' ][ 'numHosts' ] )
-        main.pingTimeout = 300
         main.log.report(
             "Load Chordal topology and Balance all Mininet switches across controllers" )
         main.log.report(
             "________________________________________________________________________" )
         main.case(
             "Assign and Balance all Mininet switches across controllers" )
-
-        main.step( "Stop any previous Mininet network topology" )
-        stopStatus = main.Mininet1.stopNet(fileName = "topoAtt" )
 
         main.step("Start Mininet with Chordal topology")
         mininetDir = main.Mininet1.home + "/custom/"
@@ -307,6 +305,8 @@ class CHOtest:
         import time
         import copy
 
+        main.prefix = 2
+
         main.newTopo = main.params['TOPO3']['topo']
         main.numMNswitches = int ( main.params[ 'TOPO3' ][ 'numSwitches' ] )
         main.numMNlinks = int ( main.params[ 'TOPO3' ][ 'numLinks' ] )
@@ -317,10 +317,7 @@ class CHOtest:
             "Load Spine and Leaf topology and Balance all Mininet switches across controllers" )
         main.log.report(
             "________________________________________________________________________" )
-        main.case(
-            "Assign and Balance all Mininet switches across controllers" )
-        main.step( "Stop any previous Mininet network topology" )
-        stopStatus = main.Mininet1.stopNet(fileName = "topoChordal" )
+        main.case( "Assign and Balance all Mininet switches across controllers" )
 
         main.step("Start Mininet with Spine topology")
         mininetDir = main.Mininet1.home + "/custom/"
@@ -328,9 +325,6 @@ class CHOtest:
         main.ONOSbench.secureCopy(main.Mininet1.user_name, main.Mininet1.ip_address, topoPath, mininetDir, direction="to")
         topoPath = mininetDir + main.newTopo
         startStatus = main.Mininet1.startNet(topoFile = topoPath)
-
-        time.sleep(60)
-        main.step( "Assign switches to controllers" )
 
         for i in range( 1, ( main.numMNswitches + 1 ) ):  # 1 to ( num of switches +1 )
             main.Mininet1.assignSwController(
@@ -391,89 +385,91 @@ class CHOtest:
         numOnosLinks = topology_result[ 'links' ]
         topoResult = main.TRUE
 
-        if ( ( main.numMNswitches == int(numOnosDevices) ) and ( main.numMNlinks == int(numOnosLinks) ) ):
-            main.step( "Store Device DPIDs" )
-            for i in range( 1, (main.numMNswitches+1) ):
-                main.deviceDPIDs.append( "of:00000000000000" + format( i, '02x' ) )
-            print "Device DPIDs in Store: \n", str( main.deviceDPIDs )
+        for check in range(main.topoCheck):
+            if ( ( main.numMNswitches == int(numOnosDevices) ) and ( main.numMNlinks == int(numOnosLinks) ) ):
+                main.step( "Store Device DPIDs" )
+                for i in range( 1, (main.numMNswitches+1) ):
+                    main.deviceDPIDs.append( "of:00000000000000" + format( i, "02x" ) )
+                print "Device DPIDs in Store: \n", str( main.deviceDPIDs )
 
-            main.step( "Store Host MACs" )
-            for i in range( 1, ( main.numMNhosts + 1 ) ):
-                main.hostMACs.append( "00:00:00:00:00:" + format( i, '02x' ) + "/-1" )
-            print "Host MACs in Store: \n", str( main.hostMACs )
-            main.MACsDict = {}
-            print "Creating dictionary of DPID and HostMacs"
-            for i in range(len(main.hostMACs)):
-                main.MACsDict[main.deviceDPIDs[i]] = main.hostMACs[i].split('/')[0]
-            print main.MACsDict
-            main.step( "Collect and store all Devices Links" )
-            linksResult = main.ONOScli1.links( jsonFormat=False )
-            ansi_escape = re.compile( r'\x1b[^m]*m' )
-            linksResult = ansi_escape.sub( '', linksResult )
-            linksResult = linksResult.replace( " links", "" ).replace( "\r\r", "" )
-            linksResult = linksResult.splitlines()
-            main.deviceLinks = copy.copy( linksResult )
-            print "Device Links Stored: \n", str( main.deviceLinks )
-            # this will be asserted to check with the params provided count of
-            # links
-            print "Length of Links Store", len( main.deviceLinks )
+                main.step( "Store Host MACs" )
+                for i in range( 1, ( main.numMNhosts + 1 ) ):
+                    main.hostMACs.append( "00:00:00:00:00:" + format( i, '02x' ) + "/-1" )
+                print "Host MACs in Store: \n", str( main.hostMACs )
+                main.MACsDict = {}
+                print "Creating dictionary of DPID and HostMacs"
+                for i in range(len(main.hostMACs)):
+                    main.MACsDict[main.deviceDPIDs[i]] = main.hostMACs[i].split('/')[0]
+                print main.MACsDict
+                main.step( "Collect and store all Devices Links" )
+                linksResult = main.ONOScli1.links( jsonFormat=False )
+                ansi_escape = re.compile( r'\x1b[^m]*m' )
+                linksResult = ansi_escape.sub( '', linksResult )
+                linksResult = linksResult.replace( " links", "" ).replace( "\r\r", "" )
+                linksResult = linksResult.splitlines()
+                main.deviceLinks = copy.copy( linksResult )
+                print "Device Links Stored: \n", str( main.deviceLinks )
+                # this will be asserted to check with the params provided count of
+                # links
+                print "Length of Links Store", len( main.deviceLinks )
 
-            main.step( "Collect and store each Device ports enabled Count" )
-            time1 = time.time()
-            for i in xrange(1,(main.numMNswitches + 1), int( main.numCtrls ) ):
-                pool = []
-                for cli in main.CLIs:
-                    if i >=  main.numMNswitches + 1:
-                        break
-                    dpid = "of:00000000000000" + format( i,'02x' )
-                    t = main.Thread(target = cli.getDevicePortsEnabledCount,threadID = main.threadID, name = "getDevicePortsEnabledCount",args = [dpid])
-                    t.start()
-                    pool.append(t)
-                    i = i + 1
-                    main.threadID = main.threadID + 1
-                for thread in pool:
-                    thread.join()
-                    portResult = thread.result
-                    main.devicePortsEnabledCount.append( portResult )
-            print "Device Enabled Port Counts Stored: \n", str( main.devicePortsEnabledCount )
-            time2 = time.time()
-            main.log.info("Time for counting enabled ports of the switches: %2f seconds" %(time2-time1))
+                main.step( "Collect and store each Device ports enabled Count" )
+                time1 = time.time()
+                for i in xrange(1,(main.numMNswitches + 1), int( main.numCtrls ) ):
+                    pool = []
+                    for cli in main.CLIs:
+                        if i >=  main.numMNswitches + 1:
+                            break
+                        dpid = "of:00000000000000" + format( i, "02x" )
+                        t = main.Thread(target = cli.getDevicePortsEnabledCount,threadID = main.threadID, name = "getDevicePortsEnabledCount",args = [dpid])
+                        t.start()
+                        pool.append(t)
+                        i = i + 1
+                        main.threadID = main.threadID + 1
+                    for thread in pool:
+                        thread.join()
+                        portResult = thread.result
+                        main.devicePortsEnabledCount.append( portResult )
+                print "Device Enabled Port Counts Stored: \n", str( main.devicePortsEnabledCount )
+                time2 = time.time()
+                main.log.info("Time for counting enabled ports of the switches: %2f seconds" %(time2-time1))
 
-            main.step( "Collect and store each Device active links Count" )
-            time1 = time.time()
+                main.step( "Collect and store each Device active links Count" )
+                time1 = time.time()
 
-            for i in xrange( 1,( main.numMNswitches + 1 ), int( main.numCtrls) ):
-                pool = []
-                for cli in main.CLIs:
-                    if i >=  main.numMNswitches + 1:
-                        break
-                    dpid = "of:00000000000000" + format( i,'02x' )
-                    t = main.Thread( target = cli.getDeviceLinksActiveCount,
-                                     threadID = main.threadID,
-                                     name = "getDevicePortsEnabledCount",
-                                     args = [dpid])
-                    t.start()
-                    pool.append(t)
-                    i = i + 1
-                    main.threadID = main.threadID + 1
-                for thread in pool:
-                    thread.join()
-                    linkCountResult = thread.result
-                    main.deviceActiveLinksCount.append( linkCountResult )
-            print "Device Active Links Count Stored: \n", str( main.deviceActiveLinksCount )
-            time2 = time.time()
-            main.log.info("Time for counting all enabled links of the switches: %2f seconds" %(time2-time1))
+                for i in xrange( 1,( main.numMNswitches + 1 ), int( main.numCtrls) ):
+                    pool = []
+                    for cli in main.CLIs:
+                        if i >=  main.numMNswitches + 1:
+                            break
+                        dpid = "of:00000000000000" + format( i, "02x" )
+                        t = main.Thread( target = cli.getDeviceLinksActiveCount,
+                                         threadID = main.threadID,
+                                         name = "getDevicePortsEnabledCount",
+                                         args = [dpid])
+                        t.start()
+                        pool.append(t)
+                        i = i + 1
+                        main.threadID = main.threadID + 1
+                    for thread in pool:
+                        thread.join()
+                        linkCountResult = thread.result
+                        main.deviceActiveLinksCount.append( linkCountResult )
+                print "Device Active Links Count Stored: \n", str( main.deviceActiveLinksCount )
+                time2 = time.time()
+                main.log.info("Time for counting all enabled links of the switches: %2f seconds" %(time2-time1))
 
-        else:
-            main.log.info("Devices (expected): %s, Links (expected): %s" %
-                    ( str( main.numMNswitches ), str( main.numMNlinks ) ) )
-            main.log.info("Devices (actual): %s, Links (actual): %s" %
-                    ( numOnosDevices , numOnosLinks ) )
-            main.log.info("Topology does not match, exiting CHO test...")
-            topoResult = main.FALSE
-            # It's better exit here from running the test
-            main.cleanup()
-            main.exit()
+                # Exit out of the topo check loop
+                break
+
+            else:
+                main.log.info("Devices (expected): %s, Links (expected): %s" %
+                        ( str( main.numMNswitches ), str( main.numMNlinks ) ) )
+                main.log.info("Devices (actual): %s, Links (actual): %s" %
+                        ( numOnosDevices , numOnosLinks ) )
+                main.log.info("Topology does not match, trying again...")
+                topoResult = main.FALSE
+                time.sleep(main.topoCheckDelay)
 
         # just returning TRUE for now as this one just collects data
         case3Result = topoResult
@@ -481,39 +477,72 @@ class CHOtest:
                                  onpass="Saving ONOS topology data test PASS",
                                  onfail="Saving ONOS topology data test FAIL" )
 
+
+
+    def CASE200( self, main ):
+
+        import time
+        main.log.report( "Clean up ONOS" )
+        main.log.case( "Stop topology and remove hosts and devices" )
+
+        main.step( "Stop Topology" )
+        stopStatus = main.Mininet1.stopNet()
+        utilities.assert_equals( expect=main.TRUE, actual=stopStatus,
+                                 onpass="Stopped mininet",
+                                 onfail="Failed to stop mininet" )
+
+
+        main.log.info( "Constructing host id list" )
+        hosts = []
+        for i in range( main.numMNhosts ):
+            hosts.append( "h" + str(i+1) )
+
+        main.step( "Getting host ids" )
+        hostList = main.CLIs[0].getHostsId( hosts )
+        hostIdResult = True if hostList else False
+        utilities.assert_equals( expect=True, actual=hostIdResult,
+                                 onpass="Successfully obtained the host ids.",
+                                 onfail="Failed to obtain the host ids" )
+
+        main.step( "Removing hosts" )
+        hostResult = main.CLIs[0].removeHost( hostList )
+        utilities.assert_equals( expect=main.TRUE, actual=hostResult,
+                                 onpass="Successfully removed hosts",
+                                 onfail="Failed remove hosts" )
+
+        time.sleep( main.remHostDelay )
+
+        main.log.info( "Constructing device uri list" )
+        deviceList = []
+        for i in range( main.numMNswitches ):
+            deviceList.append( "of:00000000000000" + format( i+1, "02x" ) )
+
+        main.step( "Removing devices" )
+        deviceResult = main.CLIs[0].removeDevice( deviceList )
+        utilities.assert_equals( expect=main.TRUE, actual=deviceResult,
+                                 onpass="Successfully removed devices",
+                                 onfail="Failed remove devices" )
+
+        time.sleep( main.remDevDelay )
+
+        main.log.info( "Summary\n{}".format( main.CLIs[0].summary( jsonFormat=False ) ) )
+
+
     def CASE40( self, main ):
         """
-        Verify Reactive forwarding (Att Topology)
+        Verify Reactive forwarding
         """
-        import re
-        import copy
         import time
-        main.log.report( "Verify Reactive forwarding (Att Topology)" )
+        main.log.report( "Verify Reactive forwarding" )
         main.log.report( "______________________________________________" )
-        main.case( "Enable Reactive forwarding and Verify ping all" )
-        main.step( "Enable Reactive forwarding" )
-        installResult = main.TRUE
-        # Activate fwd app
-        appResults = main.CLIs[0].activateApp( "org.onosproject.fwd" )
-        appCheck = main.TRUE
-        pool = []
-        for cli in main.CLIs:
-            t = main.Thread( target=cli.appToIDCheck,
-                             name="appToIDCheck-" + str( i ),
-                             args=[] )
-            pool.append( t )
-            t.start()
-        for t in pool:
-            t.join()
-            appCheck = appCheck and t.result
-        utilities.assert_equals( expect=main.TRUE, actual=appCheck,
-                                 onpass="App Ids seem to be correct",
-                                 onfail="Something is wrong with app Ids" )
-        if appCheck != main.TRUE:
-            main.log.warn( main.CLIs[0].apps() )
-            main.log.warn( main.CLIs[0].appIDs() )
+        main.case( "Enable Reactive forwarding, verify pingall, and disable reactive forwarding" )
 
-        time.sleep( 10 )
+        main.step( "Enable Reactive forwarding" )
+        appResult = main.CLIs[0].activateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully install fwd app",
+                                 onfail="Failed to install fwd app" )
+
 
         main.step( "Verify Ping across all hosts" )
         for i in range(main.numPings):
@@ -522,7 +551,8 @@ class CHOtest:
             if not pingResult:
                 main.log.warn("First pingall failed. Retrying...")
                 time.sleep(main.pingSleep)
-            else: break
+            else:
+                break
 
         time2 = time.time()
         timeDiff = round( ( time2 - time1 ), 2 )
@@ -531,15 +561,18 @@ class CHOtest:
             str( timeDiff ) +
             " seconds" )
 
-        if pingResult == main.TRUE:
-            main.log.report( "IPv4 Pingall Test in Reactive mode successful" )
-        else:
-            main.log.report( "IPv4 Pingall Test in Reactive mode failed" )
+        if not pingResult:
+            main.stop()
 
-        caseResult =  appCheck and pingResult
-        utilities.assert_equals( expect=main.TRUE, actual=caseResult,
+        utilities.assert_equals( expect=main.TRUE, actual=pingResult,
                                  onpass="Reactive Mode IPv4 Pingall test PASS",
                                  onfail="Reactive Mode IPv4 Pingall test FAIL" )
+
+        main.step( "Disable Reactive forwarding" )
+        appResult =  main.CLIs[0].deactivateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully deactivated fwd app",
+                                 onfail="Failed to deactivate fwd app" )
 
     def CASE41( self, main ):
         """
@@ -663,6 +696,102 @@ class CHOtest:
                                  onpass="Reactive Mode IPv4 Pingall test PASS",
                                  onfail="Reactive Mode IPv4 Pingall test FAIL" )
 
+    def CASE47( self, main ):
+        import time
+        main.log.report( "Verify Reactive forwarding" )
+        main.log.report( "______________________________________________" )
+        main.case( "Enable Reactive forwarding, verify pingall, and disable reactive forwarding" )
+
+        main.step( "Enable Reactive forwarding" )
+        appResult = main.CLIs[0].activateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully install fwd app",
+                                 onfail="Failed to install fwd app" )
+
+        numHosts = int( main.params['TOPO1']['numHosts'] )
+        wait = 1
+
+        for i in range(numHosts):
+            src = "h1"
+            dest = "h" + str(i+1)
+            main.Mininet1.handle.sendline( src + " ping " + dest + " -c 3 -i 1 -W 1" )
+            main.Mininet1.handle.expect( "mininet>" )
+            main.log.info( main.Mininet1.handle.before )
+
+        hosts = main.CLIs[0].hosts( jsonFormat=False )
+
+        main.log.info( hosts )
+
+        main.step( "Disable Reactive forwarding" )
+        appResult =  main.CLIs[0].deactivateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully deactivated fwd app",
+                                 onfail="Failed to deactivate fwd app" )
+
+    def CASE48( self, main ):
+        import time
+        main.log.report( "Verify Reactive forwarding" )
+        main.log.report( "______________________________________________" )
+        main.case( "Enable Reactive forwarding, verify pingall, and disable reactive forwarding" )
+
+        main.step( "Enable Reactive forwarding" )
+        appResult = main.CLIs[0].activateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully install fwd app",
+                                 onfail="Failed to install fwd app" )
+
+        numHosts = int( main.params['TOPO2']['numHosts'] )
+        wait = 1
+
+        for i in range(numHosts):
+            src = "h1"
+            dest = "h" + str(i+1)
+            main.Mininet1.handle.sendline( src + " ping " + dest + " -c 3 -i 1 -W 1" )
+            main.Mininet1.handle.expect( "mininet>" )
+            main.log.info( main.Mininet1.handle.before )
+
+        hosts = main.CLIs[0].hosts( jsonFormat=False )
+
+        main.log.info( hosts )
+
+        main.step( "Disable Reactive forwarding" )
+        appResult =  main.CLIs[0].deactivateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully deactivated fwd app",
+                                 onfail="Failed to deactivate fwd app" )
+
+    def CASE49( self, main ):
+        import time
+        main.log.report( "Verify Reactive forwarding" )
+        main.log.report( "______________________________________________" )
+        main.case( "Enable Reactive forwarding, verify pingall, and disable reactive forwarding" )
+
+        main.step( "Enable Reactive forwarding" )
+        appResult = main.CLIs[0].activateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully install fwd app",
+                                 onfail="Failed to install fwd app" )
+
+        numHosts = int( main.params['TOPO3']['numHosts'] )
+        wait = 1
+
+        for i in range(12, numHosts+11):
+            src = "h11"
+            dest = "h" + str(i)
+            main.Mininet1.handle.sendline( src + " ping " + dest + " -c 3 -i 1 -W 1" )
+            main.Mininet1.handle.expect( "mininet>" )
+            main.log.info( main.Mininet1.handle.before )
+
+        hosts = main.CLIs[0].hosts( jsonFormat=False )
+
+        main.log.info( hosts )
+
+        main.step( "Disable Reactive forwarding" )
+        appResult =  main.CLIs[0].deactivateApp( "org.onosproject.fwd" )
+        utilities.assert_equals( expect=main.TRUE, actual=appResult,
+                                 onpass="Successfully deactivated fwd app",
+                                 onfail="Failed to deactivate fwd app" )
+
     def CASE140( self, main ):
         """
         Verify IPv6 Reactive forwarding (Att Topology)
@@ -702,32 +831,8 @@ class CHOtest:
         else:
             main.log.report( "IPv6 Pingall Test in Reactive mode failed" )
 
-        main.step( "Disable Reactive forwarding" )
 
-        main.log.info( "Uninstall reactive forwarding app" )
-        appCheck = main.TRUE
-        appResults = appResults and main.CLIs[0].deactivateApp( "org.onosproject.fwd" )
-        pool = []
-        for cli in main.CLIs:
-            t = main.Thread( target=cli.appToIDCheck,
-                             name="appToIDCheck-" + str( i ),
-                             args=[] )
-            pool.append( t )
-            t.start()
-
-        for t in pool:
-            t.join()
-            appCheck = appCheck and t.result
-        utilities.assert_equals( expect=main.TRUE, actual=appCheck,
-                                 onpass="App Ids seem to be correct",
-                                 onfail="Something is wrong with app Ids" )
-        if appCheck != main.TRUE:
-            main.log.warn( main.CLIs[0].apps() )
-            main.log.warn( main.CLIs[0].appIDs() )
-
-        # Waiting for reative flows to be cleared.
-        time.sleep( 30 )
-        caseResult =  appCheck and cfgResult and pingResult
+        caseResult =  appCheck and pingResult
         utilities.assert_equals( expect=main.TRUE, actual=caseResult,
                                  onpass="Reactive Mode IPv6 Pingall test PASS",
                                  onfail="Reactive Mode IPv6 Pingall test FAIL" )
@@ -888,84 +993,94 @@ class CHOtest:
         main.case( "Compare ONOS topology with reference data" )
 
         main.step( "Compare current Device ports enabled with reference" )
-        time1 = time.time()
-        for i in xrange( 1,(main.numMNswitches + 1), int( main.numCtrls ) ):
-            pool = []
-            for cli in main.CLIs:
-                if i >=  main.numMNswitches + 1:
-                    break
-                dpid = "of:00000000000000" + format( i,'02x' )
-                t = main.Thread(target = cli.getDevicePortsEnabledCount,
-                        threadID = main.threadID,
-                        name = "getDevicePortsEnabledCount",
-                        args = [dpid])
-                t.start()
-                pool.append(t)
-                i = i + 1
-                main.threadID = main.threadID + 1
-            for thread in pool:
-                thread.join()
-                portResult = thread.result
-                #portTemp = re.split( r'\t+', portResult )
-                #portCount = portTemp[ 1 ].replace( "\r\r\n\x1b[32m", "" )
-                devicePortsEnabledCountTemp.append( portResult )
 
-        time2 = time.time()
-        main.log.info("Time for counting enabled ports of the switches: %2f seconds" %(time2-time1))
-        main.log.info (
-            "Device Enabled ports EXPECTED: %s" %
-            str( main.devicePortsEnabledCount ) )
-        main.log.info (
-            "Device Enabled ports ACTUAL: %s" %
-            str( devicePortsEnabledCountTemp ) )
+        for check in range(main.topoCheck):
+            time1 = time.time()
+            for i in xrange( 1,(main.numMNswitches + 1), int( main.numCtrls ) ):
+                pool = []
+                for cli in main.CLIs:
+                    if i >=  main.numMNswitches + 1:
+                        break
+                    dpid = "of:00000000000000" + format( i, "02x" )
+                    t = main.Thread(target = cli.getDevicePortsEnabledCount,
+                            threadID = main.threadID,
+                            name = "getDevicePortsEnabledCount",
+                            args = [dpid])
+                    t.start()
+                    pool.append(t)
+                    i = i + 1
+                    main.threadID = main.threadID + 1
+                for thread in pool:
+                    thread.join()
+                    portResult = thread.result
+                    #portTemp = re.split( r'\t+', portResult )
+                    #portCount = portTemp[ 1 ].replace( "\r\r\n\x1b[32m", "" )
+                    devicePortsEnabledCountTemp.append( portResult )
 
-        if ( cmp( main.devicePortsEnabledCount,
-                  devicePortsEnabledCountTemp ) == 0 ):
-            stepResult1 = main.TRUE
-        else:
-            stepResult1 = main.FALSE
+            time2 = time.time()
+            main.log.info("Time for counting enabled ports of the switches: %2f seconds" %(time2-time1))
+            main.log.info (
+                "Device Enabled ports EXPECTED: %s" %
+                str( main.devicePortsEnabledCount ) )
+            main.log.info (
+                "Device Enabled ports ACTUAL: %s" %
+                str( devicePortsEnabledCountTemp ) )
 
-        main.step( "Compare Device active links with reference" )
-        time1 = time.time()
-        for i in xrange( 1, ( main.numMNswitches + 1) , int( main.numCtrls ) ):
-            pool = []
-            for cli in main.CLIs:
-                if i >=  main.numMNswitches + 1:
-                    break
-                dpid = "of:00000000000000" + format( i,'02x' )
-                t = main.Thread(target = cli.getDeviceLinksActiveCount,
-                        threadID = main.threadID,
-                        name = "getDeviceLinksActiveCount",
-                        args = [dpid])
-                t.start()
-                pool.append(t)
-                i = i + 1
-                main.threadID = main.threadID + 1
-            for thread in pool:
-                thread.join()
-                linkCountResult = thread.result
-                #linkCountTemp = re.split( r'\t+', linkCountResult )
-                #linkCount = linkCountTemp[ 1 ].replace( "\r\r\n\x1b[32m", "" )
-                deviceActiveLinksCountTemp.append( linkCountResult )
+            if ( cmp( main.devicePortsEnabledCount,
+                      devicePortsEnabledCountTemp ) == 0 ):
+                stepResult1 = main.TRUE
+            else:
+                stepResult1 = main.FALSE
 
-        time2 = time.time()
-        main.log.info("Time for counting all enabled links of the switches: %2f seconds" %(time2-time1))
-        main.log.info (
-            "Device Active links EXPECTED: %s" %
-              str( main.deviceActiveLinksCount ) )
-        main.log.info (
-            "Device Active links ACTUAL: %s" % str( deviceActiveLinksCountTemp ) )
-        if ( cmp( main.deviceActiveLinksCount, deviceActiveLinksCountTemp ) == 0 ):
-            stepResult2 = main.TRUE
-        else:
-            stepResult2 = main.FALSE
+            main.step( "Compare Device active links with reference" )
+            time1 = time.time()
+            for i in xrange( 1, ( main.numMNswitches + 1) , int( main.numCtrls ) ):
+                pool = []
+                for cli in main.CLIs:
+                    if i >=  main.numMNswitches + 1:
+                        break
+                    dpid = "of:00000000000000" + format( i, "02x" )
+                    t = main.Thread(target = cli.getDeviceLinksActiveCount,
+                            threadID = main.threadID,
+                            name = "getDeviceLinksActiveCount",
+                            args = [dpid])
+                    t.start()
+                    pool.append(t)
+                    i = i + 1
+                    main.threadID = main.threadID + 1
+                for thread in pool:
+                    thread.join()
+                    linkCountResult = thread.result
+                    #linkCountTemp = re.split( r'\t+', linkCountResult )
+                    #linkCount = linkCountTemp[ 1 ].replace( "\r\r\n\x1b[32m", "" )
+                    deviceActiveLinksCountTemp.append( linkCountResult )
 
-        """
-        place holder for comparing devices, hosts, paths and intents if required.
-        Links and ports data would be incorrect with out devices anyways.
-        """
-        case5Result = ( stepResult1 and stepResult2 )
-        utilities.assert_equals( expect=main.TRUE, actual=case5Result,
+                    time2 = time.time()
+                    main.log.info("Time for counting all enabled links of the switches: %2f seconds" %(time2-time1))
+                    main.log.info (
+                        "Device Active links EXPECTED: %s" %
+                          str( main.deviceActiveLinksCount ) )
+                    main.log.info (
+                        "Device Active links ACTUAL: %s" % str( deviceActiveLinksCountTemp ) )
+                    if ( cmp( main.deviceActiveLinksCount, deviceActiveLinksCountTemp ) == 0 ):
+                        stepResult2 = main.TRUE
+                    else:
+                        stepResult2 = main.FALSE
+
+            """
+            place holder for comparing devices, hosts, paths and intents if required.
+            Links and ports data would be incorrect with out devices anyways.
+            """
+            caseResult = ( stepResult1 and stepResult2 )
+
+            if caseResult:
+                break
+            else:
+                time.sleep( main.topoCheckDelay )
+                main.log.warn( "Topology check failed. Trying again..." )
+
+
+        utilities.assert_equals( expect=main.TRUE, actual=caseResult,
                                  onpass="Compare Topology test PASS",
                                  onfail="Compare Topology test FAIL" )
 
@@ -2245,7 +2360,6 @@ class CHOtest:
         link2End2top = main.params[ 'SPINECORELINKS' ][ 'linkS10top' ].split( ',' )
         link2End2bot = main.params[ 'SPINECORELINKS' ][ 'linkS10bot' ].split( ',' )
         link_sleep = int( main.params[ 'timers' ][ 'LinkDiscovery' ] )
-        main.pingTimeout = 400
 
         main.log.report( "Bring some core links down and verify ping all (Host Intents-Spine Topo)" )
         main.log.report( "___________________________________________________________________________" )

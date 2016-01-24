@@ -48,6 +48,7 @@ class HAsingleInstanceRestart:
         start tcpdump
         """
         import imp
+        import time
         main.log.info( "ONOS Single node cluster restart " +
                          "HA test - initialization" )
         main.case( "Setting up test environment" )
@@ -158,10 +159,11 @@ class HAsingleInstanceRestart:
         #       index = The number of the graph under plot name
         job = "HAsingleInstanceRestart"
         plotName = "Plot-HA"
+        index = "1"
         graphs = '<ac:structured-macro ac:name="html">\n'
         graphs += '<ac:plain-text-body><![CDATA[\n'
         graphs += '<iframe src="https://onos-jenkins.onlab.us/job/' + job +\
-                  '/plot/' + plotName + '/getPlot?index=0' +\
+                  '/plot/' + plotName + '/getPlot?index=' + index +\
                   '&width=500&height=300"' +\
                   'noborder="0" width="500" height="300" scrolling="yes" ' +\
                   'seamless="seamless"></iframe>\n'
@@ -219,6 +221,7 @@ class HAsingleInstanceRestart:
                 port=main.params[ 'MNtcpdump' ][ 'port' ] )
 
         main.step( "App Ids check" )
+        time.sleep(60)
         appCheck = main.ONOScli1.appToIDCheck()
         if appCheck != main.TRUE:
             main.log.warn( main.CLIs[0].apps() )
@@ -1044,7 +1047,7 @@ class HAsingleInstanceRestart:
         global flows
         flows = []
         for i in range( 1, 29 ):
-            flows.append( main.Mininet1.getFlowTable( "s" + str( i ), version="1.3" ) )
+            flows.append( main.Mininet1.getFlowTable( "s" + str( i ), version="1.3", debug=False ) )
         if flowCheck == main.FALSE:
             for table in flows:
                 main.log.warn( table )
@@ -1368,18 +1371,13 @@ class HAsingleInstanceRestart:
         main.step( "Get the OF Table entries and compare to before " +
                    "component failure" )
         FlowTables = main.TRUE
-        flows2 = []
         for i in range( 28 ):
             main.log.info( "Checking flow table on s" + str( i + 1 ) )
-            tmpFlows = main.Mininet1.getFlowTable( "s" + str( i + 1 ), version="1.3" )
-            flows2.append( tmpFlows )
-            tempResult = main.Mininet1.flowComp(
-                flow1=flows[ i ],
-                flow2=tmpFlows )
-            FlowTables = FlowTables and tempResult
+            tmpFlows = main.Mininet1.getFlowTable( "s" + str( i + 1 ), version="1.3", debug=False )
+            FlowTables = FlowTables and main.Mininet1.flowTableComp( flows[i], tmpFlows )
             if FlowTables == main.FALSE:
-                main.log.info( "Differences in flow table for switch: s" +
-                               str( i + 1 ) )
+                main.log.warn( "Differences in flow table for switch: s{}".format( i + 1 ) )
+
         utilities.assert_equals(
             expect=main.TRUE,
             actual=FlowTables,
@@ -1432,15 +1430,13 @@ class HAsingleInstanceRestart:
         main.case( "Compare ONOS Topology view to Mininet topology" )
         main.caseExplanation = "Compare topology objects between Mininet" +\
                                 " and ONOS"
-
-        main.step( "Comparing ONOS topology to MN" )
         topoResult = main.FALSE
         elapsed = 0
         count = 0
-        main.step( "Collecting topology information from ONOS" )
+        main.step( "Comparing ONOS topology to MN topology" )
         startTime = time.time()
         # Give time for Gossip to work
-        while topoResult == main.FALSE and elapsed < 60:
+        while topoResult == main.FALSE and ( elapsed < 60 or count < 3 ):
             devicesResults = main.TRUE
             linksResults = main.TRUE
             hostsResults = main.TRUE

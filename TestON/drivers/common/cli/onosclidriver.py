@@ -331,7 +331,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def sendline( self, cmdStr, debug=False ):
+    def sendline( self, cmdStr, showResponse=False, debug=False, timeout=10 ):
         """
         Send a completely user specified string to
         the onos> prompt. Use this function if you have
@@ -339,25 +339,19 @@ class OnosCliDriver( CLI ):
 
         Warning: There are no sanity checking to commands
         sent using this method.
+
         """
         try:
+
+            main.log.info( "Command '" + str( cmdStr ) + "' sent to "
+                           + self.name + "." )
             logStr = "\"Sending CLI command: '" + cmdStr + "'\""
             self.log( logStr )
             self.handle.sendline( cmdStr )
-            i = self.handle.expect( ["onos>", "\$", pexpect.TIMEOUT] )
+            i = self.handle.expect( ["onos>", "\$"], timeout )
             response = self.handle.before
-            if i == 2:
-                self.handle.sendline()
-                self.handle.expect( ["\$", pexpect.TIMEOUT] )
-                response += self.handle.before
-                print response
-                try:
-                    print self.handle.after
-                except TypeError:
-                    pass
             # TODO: do something with i
-            main.log.info( "Command '" + str( cmdStr ) + "' sent to "
-                           + self.name + "." )
+
             if debug:
                 main.log.debug( self.name + ": Raw output" )
                 main.log.debug( self.name + ": " + repr( response ) )
@@ -388,7 +382,15 @@ class OnosCliDriver( CLI ):
                 main.log.debug( self.name + ": split output" )
                 for r in output:
                     main.log.debug( self.name + ": " + repr( r ) )
-            return output[1].strip()
+            output = output[1].strip()
+            if showResponse:
+                main.log.info( "Response from ONOS: {}".format( output ) )
+            return output
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ":ONOS timeout" )
+            if debug:
+                main.log.debug( self.handle.before )
+            return None
         except IndexError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -921,6 +923,16 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            try:
+                # TODO: Maybe make this less hardcoded
+                # ConsistentMap Exceptions
+                assert "org.onosproject.store.service" not in handle
+                # Node not leader
+                assert "java.lang.IllegalStateException" not in handle
+            except AssertionError:
+                main.log.error( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( handle ) )
+                return None
             return handle
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -1773,7 +1785,6 @@ class OnosCliDriver( CLI ):
             handle = self.sendline( cmdStr )
             jsonResult = json.loads( handle )
             return jsonResult['totalRoutes4']
-
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1789,14 +1800,13 @@ class OnosCliDriver( CLI ):
 
     def intents( self, jsonFormat = True, summary = False, **intentargs):
         """
-        Optional:
-            * jsonFormat: enable output formatting in json
-            * summary: whether only output the intent summary
-            * type: only output a certain type of intent
-              This options is valid only when jsonFormat is true and summary is
-              true
         Description:
-            Obtain intents
+            Obtain intents from the ONOS cli.
+        Optional:
+            * jsonFormat: Enable output formatting in json, default to True
+            * summary: Whether only output the intent summary, defaults to False
+            * type: Only output a certain type of intent. This options is valid
+                    only when jsonFormat is True and summary is True.
         """
         try:
             cmdStr = "intents"
@@ -1807,19 +1817,20 @@ class OnosCliDriver( CLI ):
             handle = self.sendline( cmdStr )
             args = utilities.parse_args( [ "TYPE" ], **intentargs )
             if "TYPE" in args.keys():
-                type = args[ "TYPE" ]
+                intentType = args[ "TYPE" ]
             else:
-                type = ""
-            if jsonFormat and summary and ( type != "" ):
+                intentType = ""
+            # IF we want the summary of a specific intent type
+            if jsonFormat and summary and ( intentType != "" ):
                 jsonResult = json.loads( handle )
-                if type in jsonResult.keys():
-                    return jsonResult[ type ]
+                if intentType in jsonResult.keys():
+                    return jsonResult[ intentType ]
                 else:
-                    main.log.error( "unknown TYPE, return all types of intents" )
+                    main.log.error( "unknown TYPE, returning all types of intents" )
                     return handle
             else:
+                main.log.error( handle )
                 return handle
-
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1832,7 +1843,6 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
-
 
     def getIntentState(self, intentsId, intentsJson=None):
         """
@@ -1912,8 +1922,6 @@ class OnosCliDriver( CLI ):
             # Generating a dictionary: intent id as a key and state as value
             returnValue = main.TRUE
             intentsDict = self.getIntentState( intentsId )
-
-            #print "len of intentsDict ", str( len( intentsDict ) )
             if len( intentsId ) != len( intentsDict ):
                 main.log.info( self.name + "There is something wrong " +
                                "getting intents state" )
@@ -1961,7 +1969,48 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def flows( self, jsonFormat=True ):
+    def checkIntentSummary( self, timeout=60 ):
+        """
+        Description:
+            Check the number of installed intents.
+        Optional:
+            timeout - the timeout for pexcept
+        Return:
+            Returns main.TRUE only if the number of all installed intents are the same as total intents number
+            , otherwise, returns main.FALSE.
+        """
+
+        try:
+            cmd = "intents -s -j"
+
+            # Check response if something wrong
+            response = self.sendline( cmd, timeout=timeout )
+            if response == None:
+                return main.False
+            response = json.loads( response )
+
+            # get total and installed number, see if they are match
+            allState = response.get( 'all' )
+            if allState.get('total') == allState.get('installed'):
+                main.log.info( 'successful verified Intents' )
+                return main.TRUE
+            main.log.info( 'Verified Intents failed Excepte intetnes: {} installed intents: {}'.format(allState.get('total'), allState.get('installed')))
+            return main.FALSE
+
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def flows( self, state="", jsonFormat=True, timeout=60 ):
         """
         Optional:
             * jsonFormat: enable output formatting in json
@@ -1971,12 +2020,16 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "flows"
             if jsonFormat:
-                cmdStr += " -j"
-            handle = self.sendline( cmdStr )
-            if re.search( "Error:", handle ):
-                main.log.error( self.name + ": flows() response: " +
-                                str( handle ) )
-            return handle
+                cmdStr += " -j "
+            cmdStr += state
+
+            response = self.sendline( cmdStr, timeout = timeout )
+
+            return response
+
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": ONOS timeout" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1990,46 +2043,43 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def checkFlowsState( self, isPENDING_ADD = True ):
+
+    def checkFlowsState( self, isPENDING = True, timeout=60 ):
         """
         Description:
-            Check the if all the current flows are in ADDED state or
-            PENDING_ADD state
+            Check the if all the current flows are in ADDED state
+            We check PENDING_ADD, PENDING_REMOVE, REMOVED, and FAILED flows, if the count of those states is 0,
+            which means all current flows are in ADDED state, and return main.TRUE
+            otherwise return main.FALSE
         Optional:
-            * isPENDING_ADD: whether the PENDING_ADD is also a correct status
+            * isPENDING:  whether the PENDING_ADD is also a correct status
         Return:
             returnValue - Returns main.TRUE only if all flows are in
-                          ADDED state or PENDING_ADD if the PENDING_ADD
+                          ADDED state or PENDING_ADD if the isPENDING_ADD
                           parameter is set true, return main.FALSE otherwise.
         """
         try:
-            tempFlows = json.loads( self.flows() )
-            #print tempFlows[0]
-            returnValue = main.TRUE
+            states = ["PENDING_ADD", "PENDING_REMOVE", "REMOVED", "FAILED"]
+            checkedStates = []
+            statesCount = [0, 0, 0, 0]
+            for s in states:
+                checkedStates.append( json.loads( self.flows( state=s, timeout = timeout ) ) )
 
-            if isPENDING_ADD:
-                for device in tempFlows:
-                    for flow in device.get( 'flows' ):
-                        if flow.get( 'state' ) != 'ADDED' and \
-                            flow.get( 'state' ) != 'PENDING_ADD':
+            for i in range (len( states )):
+                for c in checkedStates[i]:
+                    statesCount[i] += int( c.get("flowCount"))
+                main.log.info(states[i] + " flows: "+ str( statesCount[i] ) )
 
-                            main.log.info( self.name + ": flow Id: " +
-                                           str( flow.get( 'groupId' ) ) +
-                                           " | state:" +
-                                           str( flow.get( 'state' ) ) )
-                            returnValue = main.FALSE
+            # We want to count PENDING_ADD if isPENDING is true
+            if isPENDING:
+                if statesCount[1] + statesCount[2] + statesCount[3] > 0:
+                    return main.FALSE
             else:
-                for device in tempFlows:
-                    for flow in device.get( 'flows' ):
-                        if flow.get( 'state' ) != 'ADDED':
+                if statesCount[0] + statesCount[1] + statesCount[2] + statesCount[3] > 0:
+                    return main.FALSE
 
-                            main.log.info( self.name + ": flow Id: " +
-                                           str( flow.get( 'groupId' ) ) +
-                                           " | state:" +
-                                           str( flow.get( 'state' ) ) )
-                            returnValue = main.FALSE
+            return main.TRUE
 
-            return returnValue
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2043,58 +2093,55 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def pushTestIntents( self, dpidSrc, dpidDst, numIntents,
-                         numMult="", appId="", report=True ):
+    def pushTestIntents( self, ingress, egress, batchSize, offset="",
+                         options="", timeout=10, background = False ):
         """
         Description:
             Push a number of intents in a batch format to
             a specific point-to-point intent definition
         Required:
-            * dpidSrc: specify source dpid
-            * dpidDst: specify destination dpid
-            * numIntents: specify number of intents to push
+            * ingress: specify source dpid
+            * egress: specify destination dpid
+            * batchSize: specify number of intents to push
         Optional:
-            * numMult: number multiplier for multiplying
-              the number of intents specified
-            * appId: specify the application id init to further
-              modularize the intents
-            * report: default True, returns latency information
+            * offset: the keyOffset is where the next batch of intents
+                      will be installed
+        Returns: If failed to push test intents, it will returen None,
+                 if successful, return true.
+                 Timeout expection will return None,
+                 TypeError will return false
+                 other expections will exit()
         """
         try:
-            cmd = "push-test-intents " +\
-                  str( dpidSrc ) + " " + str( dpidDst ) + " " +\
-                  str( numIntents )
-            if numMult:
-                cmd += " " + str( numMult )
-                # If app id is specified, then numMult
-                # must exist because of the way this command
-                if appId:
-                    cmd += " " + str( appId )
-            handle = self.sendline( cmd )
-            if report:
-                latResult = []
-                main.log.info( handle )
-                # Split result by newline
-                newline = handle.split( "\r\r\n" )
-                # Ignore the first object of list, which is empty
-                newline = newline[ 1: ]
-                # Some sloppy parsing method to get the latency
-                for result in newline:
-                    result = result.split( ": " )
-                    # Append the first result of second parse
-                    latResult.append( result[ 1 ].split( " " )[ 0 ] )
-                main.log.info( latResult )
-                return latResult
+            if background:
+                back = "&"
             else:
-                return main.TRUE
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+                back = ""
+            cmd = "push-test-intents {} {} {} {} {} {}".format( options,
+                                                             ingress,
+                                                             egress,
+                                                             batchSize,
+                                                             offset,
+                                                             back )
+            response = self.sendline( cmd, timeout=timeout )
+            main.log.info( response )
+            if response == None:
+                return None
+
+            # TODO: We should handle if there is failure in installation
+            return main.TRUE
+
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": ONOS timeout" )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":    " + self.handle.before )
             main.cleanup()
             main.exit()
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.FALSE
         except Exception:
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
@@ -4043,3 +4090,201 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
+
+    def getSwController( self, uri, jsonFormat=True ):
+        """
+        Descrition: Gets the controller information from the device
+        """
+        try:
+            cmd = "device-controllers "
+            if jsonFormat:
+                cmd += "-j "
+            response = self.sendline( cmd + uri )
+            return response
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def setSwController( self, uri, ip, proto="tcp", port="6653", jsonFormat=True ):
+        """
+        Descrition: sets the controller(s) for the specified device
+
+        Parameters:
+            Required: uri - String: The uri of the device(switch).
+                      ip - String or List: The ip address of the controller.
+                      This parameter can be formed in a couple of different ways.
+                        VALID:
+                        10.0.0.1 - just the ip address
+                        tcp:10.0.0.1 - the protocol and the ip address
+                        tcp:10.0.0.1:6653 - the protocol and port can be specified,
+                                            so that you can add controllers with different
+                                            protocols and ports
+                        INVALID:
+                        10.0.0.1:6653 - this is not supported by ONOS
+
+            Optional: proto - The type of connection e.g. tcp, ssl. If a list of ips are given
+                      port - The port number.
+                      jsonFormat - If set ONOS will output in json NOTE: This is currently not supported
+
+        Returns: main.TRUE if ONOS returns without any errors, otherwise returns main.FALSE
+        """
+        try:
+            cmd = "device-setcontrollers"
+
+            if jsonFormat:
+                cmd += " -j"
+            cmd += " " + uri
+            if isinstance( ip, str ):
+                ip = [ip]
+            for item in ip:
+                if ":" in item:
+                    sitem = item.split( ":" )
+                    if len(sitem) == 3:
+                        cmd += " " + item
+                    elif "." in sitem[1]:
+                        cmd += " {}:{}".format(item, port)
+                    else:
+                        main.log.error( "Malformed entry: " + item )
+                        raise TypeError
+                else:
+                    cmd += " {}:{}:{}".format( proto, item, port )
+
+            response = self.sendline( cmd )
+
+            if "Error" in response:
+                main.log.error( response )
+                return main.FALSE
+
+            return main.TRUE
+
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def removeDevice( self, device ):
+        '''
+        Description:
+            Remove a device from ONOS by passing the uri of the device(s).
+        Parameters:
+            device - (str or list) the id or uri of the device ex. "of:0000000000000001"
+        Returns:
+            Returns main.FALSE if an exception is thrown or an error is present
+            in the response. Otherwise, returns main.TRUE.
+        NOTE:
+            If a host cannot be removed, then this function will return main.FALSE
+        '''
+        try:
+            if type( device ) is str:
+                device = list( device )
+
+            for d in device:
+                time.sleep( 1 )
+                response = self.sendline( "device-remove {}".format( d ) )
+                if "Error" in response:
+                    main.log.warn( "Error for device: {}\nResponse: {}".format( d, response ) )
+                    return main.FALSE
+
+            return main.TRUE
+
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def removeHost( self, host ):
+        '''
+        Description:
+            Remove a host from ONOS by passing the id of the host(s)
+        Parameters:
+            hostId - (str or list) the id or mac of the host ex. "00:00:00:00:00:01"
+        Returns:
+            Returns main.FALSE if an exception is thrown or an error is present
+            in the response. Otherwise, returns main.TRUE.
+        NOTE:
+            If a host cannot be removed, then this function will return main.FALSE
+        '''
+        try:
+            if type( host ) is str:
+                host = list( host )
+
+            for h in host:
+                time.sleep( 1 )
+                response = self.sendline( "host-remove {}".format( h ) )
+                if "Error" in response:
+                    main.log.warn( "Error for host: {}\nResponse: {}".format( h, response ) )
+                    return main.FALSE
+
+            return main.TRUE
+
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def link( self, begin, end, state):
+        '''
+        Description:
+            Bring link down or up in the null-provider.
+        params:
+            begin - (string) One end of a device or switch.
+            end - (string) the other end of the device or switch
+        returns:
+            main.TRUE if no exceptions were thrown and no Errors are
+            present in the resoponse. Otherwise, returns main.FALSE
+        '''
+        try:
+            cmd =  "null-link null:{} null:{} {}".format(begin, end, state)
+            response = self.sendline( cmd, showResponse=True )
+
+            if "Error" in response or "Failure" in response:
+                main.log.error( response )
+                return main.FALSE
+
+            return main.TRUE
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+

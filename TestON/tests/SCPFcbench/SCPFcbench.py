@@ -37,6 +37,7 @@ class SCPFcbench:
         maxNodes = int(main.params[ 'availableNodes' ])
         skipMvn = main.params[ 'TEST' ][ 'skipCleanInstall' ]
         cellName = main.params[ 'ENV' ][ 'cellName' ]
+        cellApps = main.params[ 'ENV' ][ 'cellApps' ]
 
         # -- INIT SECTION, ONLY RUNS ONCE -- #
         if init == False:
@@ -77,7 +78,7 @@ class SCPFcbench:
 
         #kill off all onos processes
         main.log.step("Safety check, killing all ONOS processes")
-        main.log.step("before initiating enviornment setup")
+        main.log.step("before initiating environment setup")
         for node in range(1, maxNodes + 1):
             main.ONOSbench.onosDie(ONOSIp[node])
 
@@ -94,7 +95,7 @@ class SCPFcbench:
 
 
         print "Cellname is: "+ cellName + "ONOS IP is: " + str(ONOSIp)
-        main.ONOSbench.createCellFile(BENCHIp,cellName,MN1Ip,"drivers,openflow,fwd",[ONOSIp[1]])
+        main.ONOSbench.createCellFile(BENCHIp,cellName,MN1Ip,cellApps,[ONOSIp[1]])
 
         main.step( "Set Cell" )
         main.ONOSbench.setCell(cellName)

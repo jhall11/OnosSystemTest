@@ -29,6 +29,10 @@ Required:
         including VLAN hosts. Therefore you need to install VLAN module to build
         the topology correctly.
 
+NOTE:
+    This test is being updated to use Scapy for host discovery and verification of flows.
+    So, Scapy will be required to run the test in the future.
+
 VLAN configuration:
         Execute command:
             $ sudo apt-get install vlan
@@ -36,4 +40,7 @@ VLAN configuration:
             $ sudo modprobe 8021q
         NOTE:To make this configuration permanent
             $ sudo su -c 'echo "8021q" >> /etc/modules'
+
+Scapy install:
+    sudo apt-get install Scapy
 

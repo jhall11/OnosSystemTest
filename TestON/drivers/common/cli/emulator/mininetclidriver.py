@@ -578,7 +578,7 @@ class MininetCliDriver( Emulator ):
         args = utilities.parse_args( [ "SRC", "TARGET", 'WAIT' ], **pingParams )
         wait = args['WAIT']
         wait = int( wait if wait else 1 )
-        command = args[ "SRC" ] + " ping " + \
+        command = args[ "SRC" ] + " ping6 " + \
             args[ "TARGET" ] + " -c 1 -i 1 -W " + str( wait ) + " "
         try:
             main.log.info( "Sending: " + command )
@@ -1235,30 +1235,33 @@ class MininetCliDriver( Emulator ):
 
     def link( self, **linkargs ):
         """
-           Bring link( s ) between two nodes up or down"""
-        args = utilities.parse_args( [ "END1", "END2", "OPTION" ], **linkargs )
-        end1 = args[ "END1" ] if args[ "END1" ] is not None else ""
-        end2 = args[ "END2" ] if args[ "END2" ] is not None else ""
-        option = args[ "OPTION" ] if args[ "OPTION" ] is not None else ""
-        main.log.info(
-            "Bring link between '" +
-            end1 +
-            "' and '" +
-            end2 +
-            "' '" +
-            option +
-            "'" )
-        command = "link " + \
-            str( end1 ) + " " + str( end2 ) + " " + str( option )
+           Bring link( s ) between two nodes up or down
+        """
         try:
-            self.handle.sendline( command )
+            args = utilities.parse_args( [ "END1", "END2", "OPTION" ], **linkargs )
+            end1 = args[ "END1" ] if args[ "END1" ] is not None else ""
+            end2 = args[ "END2" ] if args[ "END2" ] is not None else ""
+            option = args[ "OPTION" ] if args[ "OPTION" ] is not None else ""
+
+            main.log.info( "Bring link between " + str( end1 ) + " and " + str( end2 ) + " " + str( option ) )
+            cmd = "link {} {} {}".format( end1, end2, option )
+            self.handle.sendline( cmd )
             self.handle.expect( "mininet>" )
+            response = self.handle.before
+            main.log.info( response )
+
+            return main.TRUE
+        except pexpect.TIMEOUT:
+            main.log.exception( self.name + ": Command timed out" )
+            return None
         except pexpect.EOF:
-            main.log.error( self.name + ": EOF exception found" )
-            main.log.error( self.name + ":     " + self.handle.before )
+            main.log.exception( self.name + ": connection closed." )
             main.cleanup()
             main.exit()
-        return main.TRUE
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
 
     def switch( self, **switchargs ):
         """
@@ -1900,18 +1903,37 @@ class MininetCliDriver( Emulator ):
         else:
             main.log.error( "Connection failed to the Mininet host" )
 
-    def flowComp( self, flow1, flow2 ):
-        if flow1 == flow2:
+    def flowTableComp( self, flowTable1, flowTable2 ):
+        # This function compares the selctors and treatments of each flow
+        try:
+            if len(flowTable1) != len(flowTable2):
+                main.log.warn( "Flow table lengths do not match" )
+                return main.FALSE
+            dFields = ["n_bytes", "cookie", "n_packets", "duration"]
+            for flow1, flow2 in zip(flowTable1, flowTable2):
+                for field in dFields:
+                    try:
+                        flow1.pop( field )
+                    except KeyError as e:
+                        main.log.warn( e )
+                        main.log.debug( flow1 )
+                    try:
+                        flow2.pop( field )
+                    except KeyError as e:
+                        main.log.warn( e )
+                        main.log.debug( flow2 )
+            for i in range( len(flowTable1) ):
+                if flowTable1[i] not in flowTable2:
+                    main.log.warn( "Flow tables do not match:" )
+                    main.log.warn( "Old flow:\n{}\n not in new flow table".format( flowTable1[i] ) )
+                    return main.FALSE
             return main.TRUE
-        else:
-            main.log.info( "Flow tables do not match, printing tables:" )
-            main.log.info( "Flow Table 1:" )
-            main.log.info( flow1 )
-            main.log.info( "Flow Table 2:" )
-            main.log.info( flow2 )
-            return main.FALSE
+        except Exception:
+            main.log.exception( "Uncaught exception!" )
+            main.cleanup()
+            main.exit()
 
-    def parseFlowTable( self, flows, debug=True ):
+    def parseFlowTable( self, flowTable, version="", debug=True ):
         '''
         Discription: Parses flows into json format.
         NOTE: this can parse any string thats separated with commas
@@ -1923,30 +1945,74 @@ class MininetCliDriver( Emulator ):
                 debug: prints out the final result
         returns: A list of flows in json format
         '''
-        # Parse the flows
-        jsonFlows = []
-        for flow in flows:
-            # split on the comma
-            flow = flow.split(",")
-            # get rid of empty elements
-            flow = [f for f in flow if f != ""]
+        jsonFlowTable = []
+        for flow in flowTable:
             jsonFlow = {}
-            for f in flow:
-                # separate the key and the value
-                if "=" in f:
-                    f = f.split("=")
-                    key = f[0]
-                    # get rid of unwanted spaces
-                    if key[0] == " ": key = key[1:]
-                    val = f[1]
-                    jsonFlow.update( {key:val} )
-            jsonFlows.append( jsonFlow )
+            # split up the fields of the flow
+            parsedFlow = flow.split(", ")
+            # get rid of any spaces in front of the field
+            for i in range( len(parsedFlow) ):
+                item = parsedFlow[i]
+                if item[0] == " ":
+                    parsedFlow[i] = item[1:]
+            # grab the selector and treatment from the parsed flow
+            # the last element is the selector and the treatment
+            temp = parsedFlow.pop(-1)
+            # split up the selector and the treatment
+            temp = temp.split(" ")
+            index = 0
+            # parse the flags
+            # NOTE: This only parses one flag
+            flag = {}
+            if version == "1.3":
+                flag = {"flag":[temp[index]]}
+                index += 1
+            # the first element is the selector and split it up
+            sel = temp[index]
+            index += 1
+            sel = sel.split(",")
+            # the priority is stuck in the selecter so put it back
+            # in the flow
+            parsedFlow.append(sel.pop(0))
+            # parse selector
+            criteria = []
+            for item in sel:
+                # this is the type of the packet e.g. "arp"
+                if "=" not in item:
+                    criteria.append( {"type":item} )
+                else:
+                    field = item.split("=")
+                    criteria.append( {field[0]:field[1]} )
+            selector = {"selector": {"criteria":sorted(criteria)} }
+            treat = temp[index]
+            # get rid of the action part e.g. "action=output:2"
+            # we will add it back later
+            treat = treat.split("=")
+            treat.pop(0)
+            # parse treatment
+            action = []
+            for item in treat:
+                field = item.split(":")
+                action.append( {field[0]:field[1]} )
+            # create the treatment field and add the actions
+            treatment = {"treatment": {"action":sorted(action)} }
+            # parse the rest of the flow
+            for item in parsedFlow:
+                field = item.split("=")
+                jsonFlow.update( {field[0]:field[1]} )
+            # add the treatment and the selector to the json flow
+            jsonFlow.update( selector )
+            jsonFlow.update( treatment )
+            jsonFlow.update( flag )
 
-        if debug: print "jsonFlows:\n{}\n\n".format(jsonFlows)
+            if debug: main.log.debug( "\033[94mJson flow:\033[0m\n{}\n".format(jsonFlow) )
 
-        return jsonFlows
+            # add the json flow to the json flow table
+            jsonFlowTable.append( jsonFlow )
 
-    def getFlowTable( self, sw, version="1.3", debug=True):
+        return jsonFlowTable
+
+    def getFlowTable( self, sw, version="", debug=False):
         '''
         Discription: Returns the flow table(s) on a switch or switches in a list.
             Each element is a flow.
@@ -1968,9 +2034,10 @@ class MininetCliDriver( Emulator ):
             for s in switches:
                 cmd = "sh ovs-ofctl dump-flows " + s
 
-                if "1.3" in version:
+                if "1.0" == version:
+                    cmd += " -F OpenFlow10-table_id"
+                elif "1.3" == version:
                     cmd += " -O OpenFlow13"
-                else: cmd += " -F OpenFlow10-table_id"
 
                 main.log.info( "Sending: " + cmd )
                 self.handle.sendline( cmd )
@@ -1986,7 +2053,7 @@ class MininetCliDriver( Emulator ):
 
             if debug: print "Flows:\n{}\n\n".format(flows)
 
-            return self.parseFlowTable( flows, debug )
+            return self.parseFlowTable( flows, version, debug )
 
         except pexpect.TIMEOUT:
             main.log.exception( self.name + ": Command timed out" )

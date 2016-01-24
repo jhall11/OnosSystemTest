@@ -107,6 +107,7 @@ class spineTopo( Topo ):
         s77 = self.addSwitch( 's77' )
         s78 = self.addSwitch( 's78' )
 
+
         # ... and now hosts
         # s1_host = self.addHost( 'h1', ip='10.1.0.1/24', cls=dualStackHost, v6Addr='1000::1/64' )
         # s2_host = self.addHost( 'h2', ip='10.1.0.2/24', cls=dualStackHost, v6Addr='1000::2/64' )
