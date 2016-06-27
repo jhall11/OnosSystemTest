@@ -22,6 +22,7 @@ Setup
 1. Run the install script
 
     $ cd OnosSystemTest/TestON
+
     $ install.sh
 
 
@@ -105,6 +106,8 @@ Each test has its own folder with the following files:
     - This is written in Openspeak, a word based language developed by Paxterra.
 
     - It defines the cases and sequence of events for the test
+
+    - TestON will automatically generate the .py file based on the .ospk file if the .ospk file exists.
 
 2. .py file
 
