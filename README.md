@@ -93,7 +93,7 @@ Running TestON
 
 3. Run the test
 
-    teston> run SAMPstartTemplate_1node
+    $ teston run SAMPstartTemplate_1node
 
 The Tests
 -----------------------------------------------
@@ -134,3 +134,23 @@ Here are a few things to check if it doesn't work
 1. Double check the topo file for that specific test the nodes must be able to run that specific component ( Mininet IP -> machine with mn installed)
 
 2. Enable passwordless logins between your nodes and the TestON node.
+
+Features
+-----------------------------------------------
+Some features in TestON are:
+
+    - Pause Function
+
+    - [Retry Function](TestON/Documentation/features/retry.md)
+
+    - Test suite hierarchy
+
+    - Test dependency folders
+
+    - 
+
+    - 
+
+    - 
+
+    - 
