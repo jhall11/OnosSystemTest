@@ -75,7 +75,7 @@ class OnosRestDriver( Controller ):
             main.log.exception( "Error parsing jsonObject" )
             return None
 
-    def send( self, ip, port, url, base="/onos/v1", method="GET",
+    def send( self, url, ip = "DEFAULT", port = "DEFAULT", base="/onos/v1", method="GET",
               query=None, data=None, debug=False ):
         """
         Arguments:
@@ -94,6 +94,14 @@ class OnosRestDriver( Controller ):
         # TODO: should we maybe just pass kwargs straight to response?
         # TODO: Do we need to allow for other protocols besides http?
         # ANSWER: Not yet, but potentially https with certificates
+        if ip == "DEFAULT":
+                main.log.warn( "No ip given, reverting to ip from topo file" )
+                ip = self.ip_address
+        if port == "DEFAULT":
+                main.log.warn( "No port given, reverting to port " +
+                               "from topo file" )
+                port = self.port
+
         try:
             path = "http://" + str( ip ) + ":" + str( port ) + base + url
             if self.user_name and self.pwd:
@@ -137,7 +145,7 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip, port, url="/intents" )
+            response = self.send( url="/intents", ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -185,7 +193,7 @@ class OnosRestDriver( Controller ):
                 port = self.port
             # NOTE: REST url requires the intent id to be in decimal form
             query = "/" + str( appId ) + "/" + str( intentId )
-            response = self.send( ip, port, url="/intents" + query )
+            response = self.send( url="/intents" + query, ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -248,7 +256,7 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip, port, url="/applications" )
+            response = self.send( url="/applications", ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -291,8 +299,9 @@ class OnosRestDriver( Controller ):
                                "from topo file" )
                 port = self.port
             query = "/" + str( appName ) + "/active"
-            response = self.send( ip, port, method="POST",
-                                  url="/applications" + query )
+            response = self.send( method="POST",
+                                  url="/applications" + query,
+                                  ip = ip, port = port)
             if response:
                 output = response[ 1 ]
                 app = json.loads( output )
@@ -347,8 +356,9 @@ class OnosRestDriver( Controller ):
                                "from topo file" )
                 port = self.port
             query = "/" + str( appName ) + "/active"
-            response = self.send( ip, port, method="DELETE",
-                                  url="/applications" + query )
+            response = self.send( method="DELETE",
+                                  url="/applications" + query,
+                                  ip = ip, port = port )
             if response:
                 output = response[ 1 ]
                 app = json.loads( output )
@@ -401,7 +411,8 @@ class OnosRestDriver( Controller ):
                                "from topo file" )
                 port = self.port
             query = "/" + project + str( appName )
-            response = self.send( ip, port, url="/applications" + query )
+            response = self.send( url="/applications" + query,
+                                  ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -420,7 +431,7 @@ class OnosRestDriver( Controller ):
             main.exit()
 
     def addHostIntent( self, hostIdOne, hostIdTwo, appId='org.onosproject.cli',
-                       ip="DEFAULT", port="DEFAULT" ):
+                       ip="DEFAULT", port="DEFAULT", vlanId="" ):
         """
         Description:
             Adds a host-to-host intent ( bidirectional ) by
@@ -443,6 +454,9 @@ class OnosRestDriver( Controller ):
                           "constraints": [{"type": "LinkTypeConstraint",
                                            "types": ["OPTICAL"],
                                            "inclusive": 'false' }]}
+            if vlanId:
+                intentJson[ 'selector' ][ 'criteria' ].append( { "type":"VLAN_VID",
+                                                                 "vlanId":vlanId } )
             output = None
             if ip == "DEFAULT":
                 main.log.warn( "No ip given, reverting to ip from topo file" )
@@ -451,10 +465,8 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip,
-                                  port,
-                                  method="POST",
-                                  url="/intents",
+            response = self.send( method="POST",
+                                  url="/intents", ip = ip, port = port,
                                   data=json.dumps( intentJson ) )
             if response:
                 if 201:
@@ -492,7 +504,8 @@ class OnosRestDriver( Controller ):
                         tcpSrc="",
                         tcpDst="",
                         ip="DEFAULT",
-                        port="DEFAULT" ):
+                        port="DEFAULT",
+                        vlanId="" ):
         """
         Description:
             Adds a point-to-point intent ( uni-directional ) by
@@ -590,6 +603,10 @@ class OnosRestDriver( Controller ):
                 intentJson[ 'selector' ][ 'criteria' ].append(
                                                        { "type":"IP_PROTO",
                                                          "protocol": ipProto } )
+            if vlanId:
+                intentJson[ 'selector' ][ 'criteria' ].append(
+                                                       { "type":"VLAN_VID",
+                                                         "vlanId": vlanId } )
 
             # TODO: Bandwidth and Lambda will be implemented if needed
 
@@ -603,10 +620,8 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip,
-                                  port,
-                                  method="POST",
-                                  url="/intents",
+            response = self.send( method="POST",
+                                  url="/intents", ip = ip, port = port,
                                   data=json.dumps( intentJson ) )
             if response:
                 if 201:
@@ -644,10 +659,8 @@ class OnosRestDriver( Controller ):
                 port = self.port
             # NOTE: REST url requires the intent id to be in decimal form
             query = "/" + str( appId ) + "/" + str( int( intentId, 16 ) )
-            response = self.send( ip,
-                                  port,
-                                  method="DELETE",
-                                  url="/intents" + query )
+            response = self.send( method="DELETE",
+                                  url="/intents" + query, ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     return main.TRUE
@@ -747,7 +760,7 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip, port, url="/hosts" )
+            response = self.send( url="/hosts", ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -793,7 +806,7 @@ class OnosRestDriver( Controller ):
                                "from topo file" )
                 port = self.port
             query = "/" + mac + "/" + vlan
-            response = self.send( ip, port, url="/hosts" + query )
+            response = self.send( url="/hosts" + query, ip = ip, port = port )
             if response:
             # NOTE: What if the person wants other values? would it be better
             # to have a function that gets a key and return a value instead?
@@ -832,7 +845,7 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip, port, url="/topology" )
+            response = self.send( url="/topology", ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -869,7 +882,7 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip, port, url="/devices" )
+            response = self.send( url="/devices", ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -1032,7 +1045,7 @@ class OnosRestDriver( Controller ):
                 main.log.warn( "No port given, reverting to port " +
                                "from topo file" )
                 port = self.port
-            response = self.send( ip, port, url="/flows" )
+            response = self.send( url="/flows", ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -1075,7 +1088,7 @@ class OnosRestDriver( Controller ):
             if flowId:
                 url += "/" + str( int( flowId ) )
             print url
-            response = self.send( ip, port, url=url )
+            response = self.send( url=url, ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -1123,10 +1136,8 @@ class OnosRestDriver( Controller ):
                                "from topo file" )
                 port = self.port
             url = "/flows/" + deviceId
-            response = self.send( ip,
-                                  port,
-                                  method="POST",
-                                  url=url,
+            response = self.send( method="POST",
+                                  url=url, ip = ip, port = port,
                                   data=json.dumps( flowJson ) )
             if response:
                 if 201:
@@ -1292,10 +1303,8 @@ class OnosRestDriver( Controller ):
                 port = self.port
             # NOTE: REST url requires the intent id to be in decimal form
             query = "/" + str( deviceId ) + "/" + str( int( flowId ) )
-            response = self.send( ip,
-                                  port,
-                                  method="DELETE",
-                                  url="/flows" + query )
+            response = self.send( method="DELETE",
+                                  url="/flows" + query, ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     return main.TRUE
@@ -1365,7 +1374,7 @@ class OnosRestDriver( Controller ):
                     url += "/" + subjectKey
                     if configKey:
                         url += "/" + configKey
-            response = self.send( ip, port, url=url )
+            response = self.send( url=url, ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     output = response[ 1 ]
@@ -1415,9 +1424,8 @@ class OnosRestDriver( Controller ):
                     url += "/" + subjectKey
                     if configKey:
                         url += "/" + configKey
-            response = self.send( ip, port,
-                                  method="POST",
-                                  url=url,
+            response = self.send( method="POST",
+                                  url=url, ip = ip, port = port,
                                   data=json.dumps( cfgJson ) )
             if response:
                 if 200 <= response[ 0 ] <= 299:
@@ -1462,9 +1470,8 @@ class OnosRestDriver( Controller ):
                     url += "/" + subjectKey
                     if configKey:
                         url += "/" + configKey
-            response = self.send( ip, port,
-                                  method="DELETE",
-                                  url=url )
+            response = self.send( method="DELETE",
+                                  url=url, ip = ip, port = port )
             if response:
                 if 200 <= response[ 0 ] <= 299:
                     main.log.info( self.name + ": Successfully delete cfg" )
@@ -1476,6 +1483,346 @@ class OnosRestDriver( Controller ):
         except ( AttributeError, TypeError ):
             main.log.exception( self.name + ": Object not as expected" )
             return None
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def createFlowBatch( self,
+                      numSw = 1,
+                      swIndex = 1,
+                      batchSize = 1,
+                      batchIndex = 1,
+                      deviceIdpreFix = "of:",
+                      appId=0,
+                      deviceID="",
+                      ingressPort="",
+                      egressPort="",
+                      ethType="",
+                      ethSrc="",
+                      ethDst="",
+                      vlan="",
+                      ipProto="",
+                      ipSrc=(),
+                      ipDst=(),
+                      tcpSrc="",
+                      tcpDst="",
+                      udpDst="",
+                      udpSrc="",
+                      mpls="",
+                      ip="DEFAULT",
+                      port="DEFAULT",
+                      debug=False ):
+        """
+        Description:
+            Creates batches of MAC-rule flows for POST.
+            Predefined MAC: 2 MS Hex digit for iterating devices
+                        Next 5 Hex digit for iterating batch numbers
+                        Next 5 Hex digit for iterating flows within a batch
+        Required:
+            * deviceId: id of the device
+        Optional:
+            * ingressPort: port ingress device
+            * egressPort: port  of egress device
+            * ethType: specify ethType
+            * ethSrc: specify ethSrc ( i.e. src mac addr )
+            * ethDst: specify ethDst ( i.e. dst mac addr )
+            * ipProto: specify ip protocol
+            * ipSrc: specify ip source address with mask eg. ip#/24
+                as a tuple (type, ip#)
+            * ipDst: specify ip destination address eg. ip#/24
+                as a tuple (type, ip#)
+            * tcpSrc: specify tcp source port
+            * tcpDst: specify tcp destination port
+        Returns:
+            Returns main.TRUE for successful requests; Returns main.FALSE
+            if error on requests;
+            Returns None for exceptions
+        NOTE:
+            The ip and port option are for the requests input's ip and port
+            of the ONOS node
+        """
+        #from pprint import pprint
+
+        flowJsonList = []
+        flowJsonBatch = {"flows":flowJsonList}
+        dev = swIndex
+
+        for fl in range(1, batchSize + 1):
+            flowJson = { "priority":100,
+                           "deviceId":"",
+                           "isPermanent":"true",
+                           "timeout":0,
+                           "treatment":{"instructions":[]},
+                           "selector": {"criteria":[]}}
+
+            #main.log.info("fl: " + str(fl))
+            if dev <= numSw:
+                deviceId = deviceIdpreFix + "{0:0{1}x}".format(dev,16)
+                #print deviceId
+                flowJson['deviceId'] = deviceId
+                dev += 1
+            else:
+                dev = 1
+                deviceId = deviceIdpreFix + "{0:0{1}x}".format(dev,16)
+                #print deviceId
+                flowJson['deviceId'] = deviceId
+                dev += 1
+
+                # ethSrc starts with "0"; ethDst starts with "1"
+                # 2 Hex digit of device number; 5 digits of batch index number; 5 digits of batch size
+            ethS = "%02X" %int( "0" + "{0:0{1}b}".format(dev,7), 2 ) + \
+                   "{0:0{1}x}".format(batchIndex,5) + "{0:0{1}x}".format(fl,5)
+            ethSrc = ':'.join(ethS[i:i+2] for i in range(0,len(ethS),2))
+            ethD = "%02X" %int( "1" + "{0:0{1}b}".format(dev,7), 2 ) + \
+                   "{0:0{1}x}".format(batchIndex,5) + "{0:0{1}x}".format(fl,5)
+            ethDst = ':'.join(ethD[i:i+2] for i in range(0,len(ethD),2))
+
+            if appId:
+                flowJson[ "appId" ] = appId
+
+            if egressPort:
+                flowJson[ 'treatment' ][ 'instructions' ].append( {
+                                                        "type":"OUTPUT",
+                                                        "port":egressPort } )
+            if ingressPort:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"IN_PORT",
+                                                        "port":ingressPort } )
+            if ethType:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"ETH_TYPE",
+                                                        "ethType":ethType } )
+            if ethSrc:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"ETH_SRC",
+                                                        "mac":ethSrc } )
+            if ethDst:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"ETH_DST",
+                                                        "mac":ethDst } )
+            if vlan:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"VLAN_VID",
+                                                        "vlanId":vlan } )
+            if mpls:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"MPLS_LABEL",
+                                                        "label":mpls } )
+            if ipSrc:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":ipSrc[0],
+                                                        "ip":ipSrc[1] } )
+            if ipDst:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":ipDst[0],
+                                                        "ip":ipDst[1] } )
+            if tcpSrc:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"TCP_SRC",
+                                                        "tcpPort": tcpSrc } )
+            if tcpDst:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"TCP_DST",
+                                                        "tcpPort": tcpDst } )
+            if udpSrc:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"UDP_SRC",
+                                                        "udpPort": udpSrc } )
+            if udpDst:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"UDP_DST",
+                                                        "udpPort": udpDst } )
+            if ipProto:
+                flowJson[ 'selector' ][ 'criteria' ].append( {
+                                                        "type":"IP_PROTO",
+                                                        "protocol": ipProto } )
+            #pprint(flowJson)
+            flowJsonList.append(flowJson)
+
+        main.log.info("Number of flows in batch: " + str( len(flowJsonList) ) )
+        flowJsonBatch['flows'] = flowJsonList
+        #pprint(flowJsonBatch)
+
+        return flowJsonBatch
+
+
+    def sendFlowBatch( self, batch={}, ip="DEFAULT", port="DEFAULT", debug=False ):
+        """
+        Description:
+            Sends a single flow batch through /flows REST API.
+        Required:
+            * The batch of flows
+        Returns:
+            Returns main.TRUE for successful requests; Returns main.FALSE
+            if error on requests;
+            Returns None for exceptions
+        NOTE:
+            The ip and port option are for the requests input's ip and port
+            of the ONOS node
+        """
+        import time
+
+        try:
+            if debug: main.log.debug( "Adding flow: " + self.pprint( batch ) )
+            output = None
+            if ip == "DEFAULT":
+                main.log.warn( "No ip given, reverting to ip from topo file" )
+                ip = self.ip_address
+            if port == "DEFAULT":
+                main.log.warn( "No port given, reverting to port " +
+                               "from topo file" )
+                port = self.port
+            url = "/flows/"
+            response = self.send( method="POST",
+                                  url=url, ip = ip, port = port,
+                                  data=json.dumps( batch ) )
+            #main.log.info("Post response is: ", str(response[0]))
+            if response[0] == 200:
+                main.log.info( self.name + ": Successfully POST flow batch" )
+                return main.TRUE, response
+            else:
+                main.log.error( "Error with REST request, response was: " +
+                                    str( response ) )
+                return main.FALSE
+        except NotImplementedError as e:
+            raise e  # Inform the caller
+        except ( AttributeError, TypeError ):
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def removeFlowBatch( self, batch={},
+                       ip="DEFAULT", port="DEFAULT" ):
+        """
+        Description:
+            Remove a batch of flows
+        Required:
+            flow batch
+        Return:
+            Returns main.TRUE if successfully deletes flows, otherwise
+            Returns main.FALSE, Returns None on error
+        """
+        try:
+            output = None
+            if ip == "DEFAULT":
+                main.log.warn( "No ip given, reverting to ip from topo file" )
+                ip = self.ip_address
+            if port == "DEFAULT":
+                main.log.warn( "No port given, reverting to port " +
+                               "from topo file" )
+                port = self.port
+            # NOTE: REST url requires the intent id to be in decimal form
+
+            response = self.send( method="DELETE",
+                                  url="/flows/", ip = ip, port = port,
+                                  data = json.dumps(batch) )
+            if response:
+                if 200 <= response[ 0 ] <= 299:
+                    return main.TRUE
+                else:
+                    main.log.error( "Error with REST request, response was: " +
+                                    str( response ) )
+                    return main.FALSE
+        except ( AttributeError, TypeError ):
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def getTopology( self, topologyOutput ):
+        """
+        Definition:
+            Loads a json topology output
+        Return:
+            topology = current ONOS topology
+        """
+        import json
+        try:
+            # either onos:topology or 'topology' will work in CLI
+            topology = json.loads(topologyOutput)
+            main.log.debug( topology )
+            return topology
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def checkStatus(
+            self,
+            numoswitch,
+            numolink,
+            numoctrl = -1,
+            logLevel="info" ):
+        """
+        Checks the number of switches & links that ONOS sees against the
+        supplied values. By default this will report to main.log, but the
+        log level can be specific.
+
+        Params: numoswitch = expected number of switches
+                numolink = expected number of links
+                numoctrl = expected number of controllers
+                logLevel = level to log to.
+                Currently accepts 'info', 'warn' and 'report'
+
+        Returns: main.TRUE if the number of switches and links are correct,
+                 main.FALSE if the number of switches and links is incorrect,
+                 and main.ERROR otherwise
+        """
+        try:
+            topology = self.getTopology( self.topology() )
+            if topology == {}:
+                return main.ERROR
+            output = ""
+            # Is the number of switches is what we expected
+            devices = topology.get( 'devices', False )
+            links = topology.get( 'links', False )
+            nodes = topology.get( 'nodes' , False )
+            if devices is False or links is False or nodes is False:
+                return main.ERROR
+            switchCheck = ( int( devices ) == int( numoswitch ) )
+            # Is the number of links is what we expected
+            linkCheck = ( int( links ) == int( numolink ) )
+            nodeCheck = ( int(nodes) == int(numoctrl) )or int(numoctrl) == -1
+            if switchCheck and linkCheck and nodeCheck:
+                # We expected the correct numbers
+                output = output + "The number of links and switches match "\
+                    + "what was expected"
+                result = main.TRUE
+            else:
+                output = output + \
+                    "The number of links and switches does not match " + \
+                    "what was expected"
+                result = main.FALSE
+            output = output + "\n ONOS sees %i devices" % int( devices )
+            output = output + " (%i expected) " % int( numoswitch )
+            output = output + "and %i links " % int( links )
+            output = output + "(%i expected)" % int( numolink )
+            if int( numoctrl ) > 0:
+                output = output + "and %i controllers " % int( nodes )
+                output = output + "(%i expected)" % int( numoctrl )
+            if logLevel == "report":
+                main.log.report( output )
+            elif logLevel == "warn":
+                main.log.warn( output )
+            else:
+                main.log.info( output )
+            return result
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
         except Exception:
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()

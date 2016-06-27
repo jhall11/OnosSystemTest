@@ -59,7 +59,7 @@ class OnosCliDriver( CLI ):
             self.name = self.options[ 'name' ]
 
             try:
-                if os.getenv( str( self.ip_address ) ) != None:
+                if os.getenv( str( self.ip_address ) ) is not None:
                     self.ip_address = os.getenv( str( self.ip_address ) )
                 else:
                     main.log.info( self.name +
@@ -142,8 +142,24 @@ class OnosCliDriver( CLI ):
                                         timeout=10 )
                 if i == 0:  # In ONOS CLI
                     self.handle.sendline( "logout" )
-                    self.handle.expect( "\$" )
-                    return main.TRUE
+                    j = self.handle.expect( [ "\$",
+                                              "Command not found:",
+                                              pexpect.TIMEOUT ] )
+                    if j == 0:  # Successfully logged out
+                        return main.TRUE
+                    elif j == 1 or j == 2:
+                        # ONOS didn't fully load, and logout command isn't working
+                        # or the command timed out
+                        self.handle.send( "\x04" )  # send ctrl-d
+                        try:
+                            self.handle.expect( "\$" )
+                        except pexpect.TIMEOUT:
+                            main.log.error( "ONOS did not respond to 'logout' or CTRL-d" )
+                        return main.TRUE
+                    else: # some other output
+                        main.log.warn( "Unknown repsonse to logout command: '{}'",
+                                       repr( self.handle.before ) )
+                        return main.FALSE
                 elif i == 1:  # not in CLI
                     return main.TRUE
                 elif i == 3:  # Timeout
@@ -209,7 +225,7 @@ class OnosCliDriver( CLI ):
             main.exit()
 
     def startOnosCli( self, ONOSIp, karafTimeout="",
-            commandlineTimeout=10, onosStartTimeout=60 ):
+                      commandlineTimeout=10, onosStartTimeout=60 ):
         """
         karafTimeout is an optional argument. karafTimeout value passed
         by user would be used to set the current karaf shell idle timeout.
@@ -224,6 +240,7 @@ class OnosCliDriver( CLI ):
         Note: karafTimeout is left as str so that this could be read
         and passed to startOnosCli from PARAMS file as str.
         """
+        self.onosIp = ONOSIp
         try:
             self.handle.sendline( "" )
             x = self.handle.expect( [
@@ -287,40 +304,77 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def log( self, cmdStr, level="" ):
+    def startCellCli( self, karafTimeout="",
+                      commandlineTimeout=10, onosStartTimeout=60 ):
         """
-            log  the commands in the onos CLI.
-            returns main.TRUE on success
-            returns main.FALSE if Error occurred
-            Available level: DEBUG, TRACE, INFO, WARN, ERROR
-            Level defaults to INFO
+        Start CLI on onos ecll handle.
+
+        karafTimeout is an optional argument. karafTimeout value passed
+        by user would be used to set the current karaf shell idle timeout.
+        Note that when ever this property is modified the shell will exit and
+        the subsequent login would reflect new idle timeout.
+        Below is an example to start a session with 60 seconds idle timeout
+        ( input value is in milliseconds ):
+
+        tValue = "60000"
+
+        Note: karafTimeout is left as str so that this could be read
+        and passed to startOnosCli from PARAMS file as str.
         """
+
         try:
-            lvlStr = ""
-            if level:
-                lvlStr = "--level=" + level
-
             self.handle.sendline( "" )
-            i = self.handle.expect( [ "onos>","\$", pexpect.TIMEOUT ] )
-            if i == 1:
-                main.log.error( self.name + ": onos cli session closed." )
-                main.cleanup()
-                main.exit()
-            if i == 2:
-                self.handle.sendline( "" )
-                self.handle.expect( "onos>" )
-            self.handle.sendline( "log:log " + lvlStr + " " + cmdStr )
-            self.handle.expect( "log:log" )
-            self.handle.expect( "onos>" )
+            x = self.handle.expect( [
+                "\$", "onos>" ], commandlineTimeout)
 
-            response = self.handle.before
-            if re.search( "Error", response ):
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": TIMEOUT exception found" )
-            main.cleanup()
-            main.exit()
+            if x == 1:
+                main.log.info( "ONOS cli is already running" )
+                return main.TRUE
+
+            # Wait for onos start ( -w ) and enter onos cli
+            self.handle.sendline( "/opt/onos/bin/onos" )
+            i = self.handle.expect( [
+                "onos>",
+                pexpect.TIMEOUT ], onosStartTimeout )
+
+            if i == 0:
+                main.log.info( self.name + " CLI Started successfully" )
+                if karafTimeout:
+                    self.handle.sendline(
+                        "config:property-set -p org.apache.karaf.shell\
+                                 sshIdleTimeout " +
+                        karafTimeout )
+                    self.handle.expect( "\$" )
+                    self.handle.sendline( "/opt/onos/bin/onos" )
+                    self.handle.expect( "onos>" )
+                return main.TRUE
+            else:
+                # If failed, send ctrl+c to process and try again
+                main.log.info( "Starting CLI failed. Retrying..." )
+                self.handle.send( "\x03" )
+                self.handle.sendline( "/opt/onos/bin/onos" )
+                i = self.handle.expect( [ "onos>", pexpect.TIMEOUT ],
+                                        timeout=30 )
+                if i == 0:
+                    main.log.info( self.name + " CLI Started " +
+                                   "successfully after retry attempt" )
+                    if karafTimeout:
+                        self.handle.sendline(
+                            "config:property-set -p org.apache.karaf.shell\
+                                    sshIdleTimeout " +
+                            karafTimeout )
+                        self.handle.expect( "\$" )
+                        self.handle.sendline( "/opt/onos/bin/onos" )
+                        self.handle.expect( "onos>" )
+                    return main.TRUE
+                else:
+                    main.log.error( "Connection to CLI " +
+                                    self.name + " timeout" )
+                    return main.FALSE
+
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":    " + self.handle.before )
@@ -331,27 +385,98 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def sendline( self, cmdStr, showResponse=False, debug=False, timeout=10 ):
+    def log( self, cmdStr, level="",noExit=False):
+        """
+            log  the commands in the onos CLI.
+            returns main.TRUE on success
+            returns main.FALSE if Error occurred
+            if noExit is True, TestON will not exit, but clean up
+            Available level: DEBUG, TRACE, INFO, WARN, ERROR
+            Level defaults to INFO
+        """
+        try:
+            lvlStr = ""
+            if level:
+                lvlStr = "--level=" + level
+
+            self.handle.sendline( "log:log " + lvlStr + " " + cmdStr )
+            self.handle.expect( "log:log" )
+            self.handle.expect( "onos>" )
+
+            response = self.handle.before
+            if re.search( "Error", response ):
+                return main.FALSE
+            return main.TRUE
+        except pexpect.TIMEOUT:
+            main.log.exception( self.name + ": TIMEOUT exception found" )
+            if noExit:
+                main.cleanup()
+                return None
+            else:
+                main.cleanup()
+                main.exit()
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            if noExit:
+                main.cleanup()
+                return None
+            else:
+                main.cleanup()
+                main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            if noExit:
+                main.cleanup()
+                return None
+            else:
+                main.cleanup()
+                main.exit()
+
+    def sendline( self, cmdStr, showResponse=False, debug=False, timeout=10, noExit=False ):
         """
         Send a completely user specified string to
         the onos> prompt. Use this function if you have
         a very specific command to send.
+
+        if noExit is True, TestON will not exit, but clean up
 
         Warning: There are no sanity checking to commands
         sent using this method.
 
         """
         try:
+            # Try to reconnect if disconnected from cli
+            self.handle.sendline( "" )
+            i = self.handle.expect( [ "onos>", "\$", pexpect.TIMEOUT ] )
+            if i == 1:
+                main.log.error( self.name + ": onos cli session closed. ")
+                if self.onosIp:
+                    main.log.warn( "Trying to reconnect " + self.onosIp )
+                    reconnectResult = self.startOnosCli( self.onosIp )
+                    if reconnectResult:
+                        main.log.info( self.name + ": onos cli session reconnected." )
+                    else:
+                        main.log.error( self.name + ": reconnection failed." )
+                        main.cleanup()
+                        main.exit()
+                else:
+                    main.cleanup()
+                    main.exit()
+            if i == 2:
+                self.handle.sendline( "" )
+                self.handle.expect( "onos>" )
 
-            main.log.info( "Command '" + str( cmdStr ) + "' sent to "
-                           + self.name + "." )
-            logStr = "\"Sending CLI command: '" + cmdStr + "'\""
-            self.log( logStr )
+            if debug:
+                # NOTE: This adds and average of .4 seconds per call
+                logStr = "\"Sending CLI command: '" + cmdStr + "'\""
+                self.log( logStr,noExit=noExit )
             self.handle.sendline( cmdStr )
             i = self.handle.expect( ["onos>", "\$"], timeout )
             response = self.handle.before
             # TODO: do something with i
-
+            main.log.info( "Command '" + str( cmdStr ) + "' sent to "
+                           + self.name + "." )
             if debug:
                 main.log.debug( self.name + ": Raw output" )
                 main.log.debug( self.name + ": " + repr( response ) )
@@ -393,6 +518,7 @@ class OnosCliDriver( CLI ):
             return None
         except IndexError:
             main.log.exception( self.name + ": Object not as expected" )
+            main.log.debug( "response: {}".format( repr( response ) ) )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -400,12 +526,20 @@ class OnosCliDriver( CLI ):
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":    " + self.handle.before )
-            main.cleanup()
-            main.exit()
+            if noExit:
+                main.cleanup()
+                return None
+            else:
+                main.cleanup()
+                main.exit()
         except Exception:
             main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
+            if noExit:
+                main.cleanup()
+                return None
+            else:
+                main.cleanup()
+                main.exit()
 
     # IMPORTANT NOTE:
     # For all cli commands, naming convention should match
@@ -427,6 +561,8 @@ class OnosCliDriver( CLI ):
             cmdStr = "add-node " + str( nodeId ) + " " +\
                 str( ONOSIp ) + " " + str( tcpPort )
             handle = self.sendline( cmdStr )
+            assert handle is not None, "Error in sendline"
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding node" )
                 main.log.error( handle )
@@ -434,6 +570,9 @@ class OnosCliDriver( CLI ):
             else:
                 main.log.info( "Node " + str( ONOSIp ) + " added" )
                 return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -458,12 +597,17 @@ class OnosCliDriver( CLI ):
 
             cmdStr = "remove-node " + str( nodeId )
             handle = self.sendline( cmdStr )
+            assert handle is not None, "Error in sendline"
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in removing node" )
                 main.log.error( handle )
                 return main.FALSE
             else:
                 return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -489,7 +633,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -513,78 +662,12 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "topology -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             main.log.info( cmdStr + " returned: " + str( handle ) )
             return handle
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except AssertionError:
+            main.log.exception( "" )
             return None
-        except pexpect.EOF:
-            main.log.error( self.name + ": EOF exception found" )
-            main.log.error( self.name + ":    " + self.handle.before )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def featureInstall( self, featureStr ):
-        """
-        Installs a specified feature by issuing command:
-            'feature:install <feature_str>'
-        NOTE: This is now deprecated, you should use the activateApp method
-              instead
-        """
-        try:
-            cmdStr = "feature:install " + str( featureStr )
-            handle = self.sendline( cmdStr )
-            if re.search( "Error", handle ):
-                main.log.error( "Error in installing feature" )
-                main.log.error( handle )
-                return main.FALSE
-            else:
-                return main.TRUE
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
-            return None
-        except pexpect.EOF:
-            main.log.error( self.name + ": EOF exception found" )
-            main.log.error( self.name + ":    " + self.handle.before )
-            main.log.report( "Failed to install feature" )
-            main.log.report( "Exiting test" )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.log.report( "Failed to install feature" )
-            main.log.report( "Exiting test" )
-            main.cleanup()
-            main.exit()
-
-    def featureUninstall( self, featureStr ):
-        """
-        Uninstalls a specified feature by issuing command:
-            'feature:uninstall <feature_str>'
-        NOTE: This is now deprecated, you should use the deactivateApp method
-              instead
-        """
-        try:
-            cmdStr = 'feature:list -i | grep "' + featureStr + '"'
-            handle = self.sendline( cmdStr )
-            if handle != '':
-                cmdStr = "feature:uninstall " + str( featureStr )
-                output = self.sendline( cmdStr )
-                # TODO: Check for possible error responses from karaf
-            else:
-                main.log.info( "Feature needs to be installed before " +
-                               "uninstalling it" )
-                return main.TRUE
-            if re.search( "Error", output ):
-                main.log.error( "Error in uninstalling feature" )
-                main.log.error( output )
-                return main.FALSE
-            else:
-                return main.TRUE
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -607,12 +690,16 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "device-remove " + str( deviceId )
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in removing device" )
                 main.log.error( handle )
                 return main.FALSE
             else:
                 return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -637,7 +724,11 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -660,12 +751,16 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "onos:balance-masters"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in balancing masters" )
                 main.log.error( handle )
                 return main.FALSE
             else:
                 return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -679,7 +774,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def checkMasters( self,jsonFormat=True  ):
+    def checkMasters( self, jsonFormat=True  ):
         """
             Returns the output of the masters command.
             Optional argument:
@@ -690,7 +785,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -704,22 +804,28 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def checkBalanceMasters( self,jsonFormat=True ):
+    def checkBalanceMasters( self, jsonFormat=True ):
         """
             Uses the master command to check that the devices' leadership
             is evenly divided
 
             Dependencies: checkMasters() and summary()
 
-            Returns main.True if the devices are balanced
-            Returns main.False if the devices are unbalanced
+            Returns main.TRUE if the devices are balanced
+            Returns main.FALSE if the devices are unbalanced
             Exits on Exception
             Returns None on TypeError
         """
         try:
-            totalDevices = json.loads( self.summary() )[ "devices" ]
+            summaryOutput = self.summary()
+            totalDevices = json.loads( summaryOutput )[ "devices" ]
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, summaryOutput ) )
+            return None
+        try:
             totalOwnedDevices = 0
-            masters = json.loads( self.checkMasters() )
+            mastersOutput = self.checkMasters()
+            masters = json.loads( mastersOutput )
             first = masters[ 0 ][ "size" ]
             for master in masters:
                 totalOwnedDevices += master[ "size" ]
@@ -730,8 +836,8 @@ class OnosCliDriver( CLI ):
             main.log.info( "Mastership balanced between " \
                             + str( len(masters) ) + " masters" )
             return main.TRUE
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, mastersOutput ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -743,7 +849,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def links( self, jsonFormat=True ):
+    def links( self, jsonFormat=True, timeout=30 ):
         """
         Lists all core links
         Optional argument:
@@ -753,8 +859,12 @@ class OnosCliDriver( CLI ):
             cmdStr = "links"
             if jsonFormat:
                 cmdStr += " -j"
-            handle = self.sendline( cmdStr )
+            handle = self.sendline( cmdStr, timeout=timeout )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -779,7 +889,11 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -804,7 +918,11 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -841,8 +959,8 @@ class OnosCliDriver( CLI ):
                     if str( deviceId ) in device[ 'id' ]:
                         return device
             return None
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawRoles ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -870,9 +988,8 @@ class OnosCliDriver( CLI ):
                     main.log.warn( "Device has no master: " + str( device ) )
                     return main.FALSE
             return main.TRUE
-
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawRoles ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -892,6 +1009,7 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "onos:paths " + str( srcId ) + " " + str( dstId )
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in getting paths" )
                 return ( handle, "Error" )
@@ -899,6 +1017,9 @@ class OnosCliDriver( CLI ):
                 path = handle.split( ";" )[ 0 ]
                 cost = handle.split( ";" )[ 1 ]
                 return ( path, cost )
+        except AssertionError:
+            main.log.exception( "" )
+            return ( handle, "Error" )
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return ( handle, "Error" )
@@ -923,17 +1044,18 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
-            try:
+            if handle:
+                assert "Command not found:" not in handle, handle
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
                 assert "org.onosproject.store.service" not in handle
                 # Node not leader
                 assert "java.lang.IllegalStateException" not in handle
-            except AssertionError:
-                main.log.error( "Error in processing '" + cmdStr + "' " +
-                                "command: " + str( handle ) )
-                return None
             return handle
+        except AssertionError:
+            main.log.exception( "Error in processing '" + cmdStr + "' " +
+                                "command: " + str( handle ) )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -971,8 +1093,8 @@ class OnosCliDriver( CLI ):
                     elif mac in host[ 'id' ]:
                         return host
             return None
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawHosts ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -1026,11 +1148,14 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def addHostIntent( self, hostIdOne, hostIdTwo ):
+    def addHostIntent( self, hostIdOne, hostIdTwo, vlanId="", setVlan="" ):
         """
         Required:
             * hostIdOne: ONOS host id for host1
             * hostIdTwo: ONOS host id for host2
+        Optional:
+            * vlanId: specify a VLAN id for the intent
+            * setVlan: specify a VLAN id treatment
         Description:
             Adds a host-to-host intent ( bidirectional ) by
             specifying the two hosts.
@@ -1038,9 +1163,14 @@ class OnosCliDriver( CLI ):
             A string of the intent id or None on Error
         """
         try:
-            cmdStr = "add-host-intent " + str( hostIdOne ) +\
-                " " + str( hostIdTwo )
+            cmdStr = "add-host-intent "
+            if vlanId:
+                cmdStr += "-v " + str( vlanId ) + " "
+            if setVlan:
+                cmdStr += "--setVlan " + str( vlanId ) + " "
+            cmdStr += str( hostIdOne ) + " " + str( hostIdTwo )
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding Host intent" )
                 main.log.debug( "Response from ONOS was: " + repr( handle ) )
@@ -1056,6 +1186,9 @@ class OnosCliDriver( CLI ):
                     main.log.debug( "Response from ONOS was: " +
                                     repr( handle ) )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1085,6 +1218,7 @@ class OnosCliDriver( CLI ):
             cmdStr = "add-optical-intent " + str( ingressDevice ) +\
                 " " + str( egressDevice )
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             # If error, return error message
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding Optical intent" )
@@ -1099,6 +1233,9 @@ class OnosCliDriver( CLI ):
                 else:
                     main.log.error( "Error, intent ID not found" )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1127,7 +1264,9 @@ class OnosCliDriver( CLI ):
             ipSrc="",
             ipDst="",
             tcpSrc="",
-            tcpDst="" ):
+            tcpDst="",
+            vlanId="",
+            setVlan="" ):
         """
         Required:
             * ingressDevice: device id of ingress device
@@ -1144,6 +1283,8 @@ class OnosCliDriver( CLI ):
             * ipDst: specify ip destination address
             * tcpSrc: specify tcp source port
             * tcpDst: specify tcp destination port
+            * vlanId: specify vlan ID
+            * setVlan: specify a VLAN id treatment
         Description:
             Adds a point-to-point intent ( uni-directional ) by
             specifying device id's and optional fields
@@ -1155,36 +1296,32 @@ class OnosCliDriver( CLI ):
               intent via cli
         """
         try:
-            # If there are no optional arguments
-            if not ethType and not ethSrc and not ethDst\
-                    and not bandwidth and not lambdaAlloc \
-                    and not ipProto and not ipSrc and not ipDst \
-                    and not tcpSrc and not tcpDst:
-                cmd = "add-point-intent"
+            cmd = "add-point-intent"
 
-            else:
-                cmd = "add-point-intent"
-
-                if ethType:
-                    cmd += " --ethType " + str( ethType )
-                if ethSrc:
-                    cmd += " --ethSrc " + str( ethSrc )
-                if ethDst:
-                    cmd += " --ethDst " + str( ethDst )
-                if bandwidth:
-                    cmd += " --bandwidth " + str( bandwidth )
-                if lambdaAlloc:
-                    cmd += " --lambda "
-                if ipProto:
-                    cmd += " --ipProto " + str( ipProto )
-                if ipSrc:
-                    cmd += " --ipSrc " + str( ipSrc )
-                if ipDst:
-                    cmd += " --ipDst " + str( ipDst )
-                if tcpSrc:
-                    cmd += " --tcpSrc " + str( tcpSrc )
-                if tcpDst:
-                    cmd += " --tcpDst " + str( tcpDst )
+            if ethType:
+                cmd += " --ethType " + str( ethType )
+            if ethSrc:
+                cmd += " --ethSrc " + str( ethSrc )
+            if ethDst:
+                cmd += " --ethDst " + str( ethDst )
+            if bandwidth:
+                cmd += " --bandwidth " + str( bandwidth )
+            if lambdaAlloc:
+                cmd += " --lambda "
+            if ipProto:
+                cmd += " --ipProto " + str( ipProto )
+            if ipSrc:
+                cmd += " --ipSrc " + str( ipSrc )
+            if ipDst:
+                cmd += " --ipDst " + str( ipDst )
+            if tcpSrc:
+                cmd += " --tcpSrc " + str( tcpSrc )
+            if tcpDst:
+                cmd += " --tcpDst " + str( tcpDst )
+            if vlanId:
+                cmd += " -v " + str( vlanId )
+            if setVlan:
+                cmd += " --setVlan " + str( setVlan )
 
             # Check whether the user appended the port
             # or provided it as an input
@@ -1214,6 +1351,7 @@ class OnosCliDriver( CLI ):
                     str( portEgress )
 
             handle = self.sendline( cmd )
+            assert "Command not found:" not in handle, handle
             # If error, return error message
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding point-to-point intent" )
@@ -1229,6 +1367,9 @@ class OnosCliDriver( CLI ):
                 else:
                     main.log.error( "Error, intent ID not found" )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1259,7 +1400,10 @@ class OnosCliDriver( CLI ):
             tcpSrc="",
             tcpDst="",
             setEthSrc="",
-            setEthDst="" ):
+            setEthDst="",
+            vlanId="",
+            setVlan="",
+            partial=False ):
         """
         Note:
             This function assumes the format of all ingress devices
@@ -1284,6 +1428,8 @@ class OnosCliDriver( CLI ):
             * tcpDst: specify tcp destination port
             * setEthSrc: action to Rewrite Source MAC Address
             * setEthDst: action to Rewrite Destination MAC Address
+            * vlanId: specify vlan Id
+            * setVlan: specify VLAN Id treatment
         Description:
             Adds a multipoint-to-singlepoint intent ( uni-directional ) by
             specifying device id's and optional fields
@@ -1295,41 +1441,38 @@ class OnosCliDriver( CLI ):
               intent via cli
         """
         try:
-            # If there are no optional arguments
-            if not ethType and not ethSrc and not ethDst\
-                    and not bandwidth and not lambdaAlloc\
-                    and not ipProto and not ipSrc and not ipDst\
-                    and not tcpSrc and not tcpDst and not setEthSrc\
-                    and not setEthDst:
-                cmd = "add-multi-to-single-intent"
+            cmd = "add-multi-to-single-intent"
 
-            else:
-                cmd = "add-multi-to-single-intent"
-
-                if ethType:
-                    cmd += " --ethType " + str( ethType )
-                if ethSrc:
-                    cmd += " --ethSrc " + str( ethSrc )
-                if ethDst:
-                    cmd += " --ethDst " + str( ethDst )
-                if bandwidth:
-                    cmd += " --bandwidth " + str( bandwidth )
-                if lambdaAlloc:
-                    cmd += " --lambda "
-                if ipProto:
-                    cmd += " --ipProto " + str( ipProto )
-                if ipSrc:
-                    cmd += " --ipSrc " + str( ipSrc )
-                if ipDst:
-                    cmd += " --ipDst " + str( ipDst )
-                if tcpSrc:
-                    cmd += " --tcpSrc " + str( tcpSrc )
-                if tcpDst:
-                    cmd += " --tcpDst " + str( tcpDst )
-                if setEthSrc:
-                    cmd += " --setEthSrc " + str( setEthSrc )
-                if setEthDst:
-                    cmd += " --setEthDst " + str( setEthDst )
+            if ethType:
+                cmd += " --ethType " + str( ethType )
+            if ethSrc:
+                cmd += " --ethSrc " + str( ethSrc )
+            if ethDst:
+                cmd += " --ethDst " + str( ethDst )
+            if bandwidth:
+                cmd += " --bandwidth " + str( bandwidth )
+            if lambdaAlloc:
+                cmd += " --lambda "
+            if ipProto:
+                cmd += " --ipProto " + str( ipProto )
+            if ipSrc:
+                cmd += " --ipSrc " + str( ipSrc )
+            if ipDst:
+                cmd += " --ipDst " + str( ipDst )
+            if tcpSrc:
+                cmd += " --tcpSrc " + str( tcpSrc )
+            if tcpDst:
+                cmd += " --tcpDst " + str( tcpDst )
+            if setEthSrc:
+                cmd += " --setEthSrc " + str( setEthSrc )
+            if setEthDst:
+                cmd += " --setEthDst " + str( setEthDst )
+            if vlanId:
+                cmd += " -v " + str( vlanId )
+            if setVlan:
+                cmd += " --setVlan " + str( setVlan )
+            if partial:
+                cmd += " --partial"
 
             # Check whether the user appended the port
             # or provided it as an input
@@ -1366,6 +1509,7 @@ class OnosCliDriver( CLI ):
                     str( egressDevice ) + "/" +\
                     str( portEgress )
             handle = self.sendline( cmd )
+            assert "Command not found:" not in handle, handle
             # If error, return error message
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding multipoint-to-singlepoint " +
@@ -1378,6 +1522,9 @@ class OnosCliDriver( CLI ):
                 else:
                     main.log.error( "Error, intent ID not found" )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1408,7 +1555,10 @@ class OnosCliDriver( CLI ):
             tcpSrc="",
             tcpDst="",
             setEthSrc="",
-            setEthDst="" ):
+            setEthDst="",
+            vlanId="",
+            setVlan="",
+            partial=False ):
         """
         Note:
             This function assumes the format of all egress devices
@@ -1433,6 +1583,8 @@ class OnosCliDriver( CLI ):
             * tcpDst: specify tcp destination port
             * setEthSrc: action to Rewrite Source MAC Address
             * setEthDst: action to Rewrite Destination MAC Address
+            * vlanId: specify vlan Id
+            * setVlan: specify VLAN ID treatment
         Description:
             Adds a singlepoint-to-multipoint intent ( uni-directional ) by
             specifying device id's and optional fields
@@ -1444,41 +1596,38 @@ class OnosCliDriver( CLI ):
               intent via cli
         """
         try:
-            # If there are no optional arguments
-            if not ethType and not ethSrc and not ethDst\
-                    and not bandwidth and not lambdaAlloc\
-                    and not ipProto and not ipSrc and not ipDst\
-                    and not tcpSrc and not tcpDst and not setEthSrc\
-                    and not setEthDst:
-                cmd = "add-single-to-multi-intent"
+            cmd = "add-single-to-multi-intent"
 
-            else:
-                cmd = "add-single-to-multi-intent"
-
-                if ethType:
-                    cmd += " --ethType " + str( ethType )
-                if ethSrc:
-                    cmd += " --ethSrc " + str( ethSrc )
-                if ethDst:
-                    cmd += " --ethDst " + str( ethDst )
-                if bandwidth:
-                    cmd += " --bandwidth " + str( bandwidth )
-                if lambdaAlloc:
-                    cmd += " --lambda "
-                if ipProto:
-                    cmd += " --ipProto " + str( ipProto )
-                if ipSrc:
-                    cmd += " --ipSrc " + str( ipSrc )
-                if ipDst:
-                    cmd += " --ipDst " + str( ipDst )
-                if tcpSrc:
-                    cmd += " --tcpSrc " + str( tcpSrc )
-                if tcpDst:
-                    cmd += " --tcpDst " + str( tcpDst )
-                if setEthSrc:
-                    cmd += " --setEthSrc " + str( setEthSrc )
-                if setEthDst:
-                    cmd += " --setEthDst " + str( setEthDst )
+            if ethType:
+                cmd += " --ethType " + str( ethType )
+            if ethSrc:
+                cmd += " --ethSrc " + str( ethSrc )
+            if ethDst:
+                cmd += " --ethDst " + str( ethDst )
+            if bandwidth:
+                cmd += " --bandwidth " + str( bandwidth )
+            if lambdaAlloc:
+                cmd += " --lambda "
+            if ipProto:
+                cmd += " --ipProto " + str( ipProto )
+            if ipSrc:
+                cmd += " --ipSrc " + str( ipSrc )
+            if ipDst:
+                cmd += " --ipDst " + str( ipDst )
+            if tcpSrc:
+                cmd += " --tcpSrc " + str( tcpSrc )
+            if tcpDst:
+                cmd += " --tcpDst " + str( tcpDst )
+            if setEthSrc:
+                cmd += " --setEthSrc " + str( setEthSrc )
+            if setEthDst:
+                cmd += " --setEthDst " + str( setEthDst )
+            if vlanId:
+                cmd += " -v " + str( vlanId )
+            if setVlan:
+                cmd += " --setVlan " + str( setVlan )
+            if partial:
+                cmd += " --partial"
 
             # Check whether the user appended the port
             # or provided it as an input
@@ -1516,6 +1665,7 @@ class OnosCliDriver( CLI ):
                                     "have the same length" )
                     return main.FALSE
             handle = self.sendline( cmd )
+            assert "Command not found:" not in handle, handle
             # If error, return error message
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding singlepoint-to-multipoint " +
@@ -1528,6 +1678,9 @@ class OnosCliDriver( CLI ):
                 else:
                     main.log.error( "Error, intent ID not found" )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1589,43 +1742,34 @@ class OnosCliDriver( CLI ):
               intent via cli
         """
         try:
-            # If there are no optional arguments
-            if not ethType and not ethSrc and not ethDst\
-                    and not bandwidth and not lambdaAlloc \
-                    and not ipProto and not ipSrc and not ipDst \
-                    and not tcpSrc and not tcpDst and not ingressLabel \
-                    and not egressLabel:
-                cmd = "add-mpls-intent"
+            cmd = "add-mpls-intent"
 
-            else:
-                cmd = "add-mpls-intent"
-
-                if ethType:
-                    cmd += " --ethType " + str( ethType )
-                if ethSrc:
-                    cmd += " --ethSrc " + str( ethSrc )
-                if ethDst:
-                    cmd += " --ethDst " + str( ethDst )
-                if bandwidth:
-                    cmd += " --bandwidth " + str( bandwidth )
-                if lambdaAlloc:
-                    cmd += " --lambda "
-                if ipProto:
-                    cmd += " --ipProto " + str( ipProto )
-                if ipSrc:
-                    cmd += " --ipSrc " + str( ipSrc )
-                if ipDst:
-                    cmd += " --ipDst " + str( ipDst )
-                if tcpSrc:
-                    cmd += " --tcpSrc " + str( tcpSrc )
-                if tcpDst:
-                    cmd += " --tcpDst " + str( tcpDst )
-                if ingressLabel:
-                    cmd += " --ingressLabel " + str( ingressLabel )
-                if egressLabel:
-                    cmd += " --egressLabel " + str( egressLabel )
-                if priority:
-                    cmd += " --priority " + str( priority )
+            if ethType:
+                cmd += " --ethType " + str( ethType )
+            if ethSrc:
+                cmd += " --ethSrc " + str( ethSrc )
+            if ethDst:
+                cmd += " --ethDst " + str( ethDst )
+            if bandwidth:
+                cmd += " --bandwidth " + str( bandwidth )
+            if lambdaAlloc:
+                cmd += " --lambda "
+            if ipProto:
+                cmd += " --ipProto " + str( ipProto )
+            if ipSrc:
+                cmd += " --ipSrc " + str( ipSrc )
+            if ipDst:
+                cmd += " --ipDst " + str( ipDst )
+            if tcpSrc:
+                cmd += " --tcpSrc " + str( tcpSrc )
+            if tcpDst:
+                cmd += " --tcpDst " + str( tcpDst )
+            if ingressLabel:
+                cmd += " --ingressLabel " + str( ingressLabel )
+            if egressLabel:
+                cmd += " --egressLabel " + str( egressLabel )
+            if priority:
+                cmd += " --priority " + str( priority )
 
             # Check whether the user appended the port
             # or provided it as an input
@@ -1652,6 +1796,7 @@ class OnosCliDriver( CLI ):
                     str( egressPort )
 
             handle = self.sendline( cmd )
+            assert "Command not found:" not in handle, handle
             # If error, return error message
             if re.search( "Error", handle ):
                 main.log.error( "Error in adding mpls intent" )
@@ -1667,6 +1812,9 @@ class OnosCliDriver( CLI ):
                 else:
                     main.log.error( "Error, intent ID not found" )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1689,7 +1837,7 @@ class OnosCliDriver( CLI ):
         -p or --purge: Purge the intent from the store after removal
 
         Returns:
-            main.False on error and
+            main.FALSE on error and
             cli output otherwise
         """
         try:
@@ -1701,12 +1849,58 @@ class OnosCliDriver( CLI ):
 
             cmdStr += " " + app + " " + str( intentId )
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in removing intent" )
                 return main.FALSE
             else:
                 # TODO: Should this be main.TRUE
                 return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def removeAllIntents( self, purge=False, sync=False, app='org.onosproject.cli', timeout=30 ):
+        """
+        Description:
+            Remove all the intents
+        Optional args:-
+            -s or --sync: Waits for the removal before returning
+            -p or --purge: Purge the intent from the store after removal
+        Returns:
+            Returns main.TRUE if all intents are removed, otherwise returns
+            main.FALSE; Returns None for exception
+        """
+        try:
+            cmdStr = "remove-intent"
+            if purge:
+                cmdStr += " -p"
+            if sync:
+                cmdStr += " -s"
+
+            cmdStr += " " + app
+            handle = self.sendline( cmdStr, timeout=timeout )
+            assert "Command not found:" not in handle, handle
+            if re.search( "Error", handle ):
+                main.log.error( "Error in removing intent" )
+                return main.FALSE
+            else:
+                return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1727,11 +1921,15 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "purge-intents"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if re.search( "Error", handle ):
                 main.log.error( "Error in purging intents" )
                 return main.FALSE
             else:
                 return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1759,7 +1957,11 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -1783,10 +1985,14 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "routes -s -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             jsonResult = json.loads( handle )
             return jsonResult['totalRoutes4']
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except AssertionError:
+            main.log.exception( "" )
+            return None
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, handle ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -1815,6 +2021,7 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             args = utilities.parse_args( [ "TYPE" ], **intentargs )
             if "TYPE" in args.keys():
                 intentType = args[ "TYPE" ]
@@ -1829,10 +2036,12 @@ class OnosCliDriver( CLI ):
                     main.log.error( "unknown TYPE, returning all types of intents" )
                     return handle
             else:
-                main.log.error( handle )
                 return handle
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except AssertionError:
+            main.log.exception( "" )
+            return None
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, handle ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -1846,28 +2055,28 @@ class OnosCliDriver( CLI ):
 
     def getIntentState(self, intentsId, intentsJson=None):
         """
-            Check intent state.
-            Accepts a single intent ID (string type) or a list of intent IDs.
-            Returns the state(string type) of the id if a single intent ID is
-            accepted.
-            Returns a dictionary with intent IDs as the key and its
-            corresponding states as the values
-            Parameters:
-            intentId: intent ID (string type)
+        Description:
+            Gets intent state. Accepts a single intent ID (string type) or a
+            list of intent IDs.
+        Parameters:
+            intentsId: intent ID, both string type and list type are acceptable
             intentsJson: parsed json object from the onos:intents api
-            Returns:
-            state = An intent's state- INSTALL,WITHDRAWN etc.
-            stateDict = Dictionary of intent's state. intent ID as the keys and
-            state as the values.
+        Returns:
+            Returns the state (string type) of the ID if a single intent ID is
+            accepted.
+            Returns a list of dictionaries if a list of intent IDs is accepted,
+            and each dictionary maps 'id' to the Intent ID and 'state' to
+            corresponding intent state.
         """
         try:
             state = "State is Undefined"
             if not intentsJson:
-                intentsJsonTemp = json.loads( self.intents() )
+                rawJson = self.intents()
             else:
-                intentsJsonTemp = json.loads( intentsJson )
+                rawJson = intentsJson
+            parsedIntentsJson = json.loads( rawJson )
             if isinstance( intentsId, types.StringType ):
-                for intent in intentsJsonTemp:
+                for intent in parsedIntentsJson:
                     if intentsId == intent[ 'id' ]:
                         state = intent[ 'state' ]
                         return state
@@ -1878,7 +2087,7 @@ class OnosCliDriver( CLI ):
                 dictList = []
                 for i in xrange( len( intentsId ) ):
                     stateDict = {}
-                    for intents in intentsJsonTemp:
+                    for intents in parsedIntentsJson:
                         if intentsId[ i ] == intents[ 'id' ]:
                             stateDict[ 'state' ] = intents[ 'state' ]
                             stateDict[ 'id' ] = intentsId[ i ]
@@ -1890,8 +2099,8 @@ class OnosCliDriver( CLI ):
             else:
                 main.log.info( "Invalid intents ID entry" )
                 return None
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawJson ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -1923,7 +2132,7 @@ class OnosCliDriver( CLI ):
             returnValue = main.TRUE
             intentsDict = self.getIntentState( intentsId )
             if len( intentsId ) != len( intentsDict ):
-                main.log.info( self.name + "There is something wrong " +
+                main.log.info( self.name + ": There is something wrong " +
                                "getting intents state" )
                 return main.FALSE
 
@@ -1969,6 +2178,55 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
+    def compareIntent( self, intentDict ):
+        """
+        Description:
+            Compare the intent ids and states provided in the argument with all intents in ONOS
+        Return:
+            Returns main.TRUE if the two sets of intents match exactly, otherwise main.FALSE
+        Arguments:
+            intentDict: a dictionary which maps intent ids to intent states
+        """
+        try:
+            intentsRaw = self.intents()
+            intentsJson = json.loads( intentsRaw )
+            intentDictONOS = {}
+            for intent in intentsJson:
+                intentDictONOS[ intent[ 'id' ] ] = intent[ 'state' ]
+            if len( intentDict ) != len( intentDictONOS ):
+                main.log.info( self.name + ": expected intent count does not match that in ONOS, " +
+                               str( len( intentDict ) ) + " expected and " +
+                               str( len( intentDictONOS ) ) + " actual" )
+                return main.FALSE
+            returnValue = main.TRUE
+            for intentID in intentDict.keys():
+                if not intentID in intentDictONOS.keys():
+                    main.log.debug( self.name + ": intent ID - " + intentID + " is not in ONOS" )
+                    returnValue = main.FALSE
+                elif intentDict[ intentID ] != intentDictONOS[ intentID ]:
+                    main.log.debug( self.name + ": intent ID - " + intentID +
+                                    " expected state is " + intentDict[ intentID ] +
+                                    " but actual state is " + intentDictONOS[ intentID ] )
+                    returnValue = main.FALSE
+            if returnValue == main.TRUE:
+                main.log.info( self.name + ": all intent IDs and states match that in ONOS" )
+            return returnValue
+        except KeyError:
+            main.log.exception( self.name + ": KeyError exception found" )
+            return main.ERROR
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, intentsRaw ) )
+            return main.ERROR
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
     def checkIntentSummary( self, timeout=60 ):
         """
         Description:
@@ -1986,19 +2244,19 @@ class OnosCliDriver( CLI ):
             # Check response if something wrong
             response = self.sendline( cmd, timeout=timeout )
             if response == None:
-                return main.False
+                return main.FALSE
             response = json.loads( response )
 
             # get total and installed number, see if they are match
             allState = response.get( 'all' )
             if allState.get('total') == allState.get('installed'):
-                main.log.info( 'successful verified Intents' )
+                main.log.info( 'Total Intents: {}   Installed Intents: {}'.format( allState.get('total'), allState.get('installed') ) )
                 return main.TRUE
-            main.log.info( 'Verified Intents failed Excepte intetnes: {} installed intents: {}'.format(allState.get('total'), allState.get('installed')))
+            main.log.info( 'Verified Intents failed Excepte intetnes: {} installed intents: {}'.format( allState.get('total'), allState.get('installed') ) )
             return main.FALSE
 
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, response ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2009,8 +2267,11 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": ONOS timeout" )
+            return None
 
-    def flows( self, state="", jsonFormat=True, timeout=60 ):
+    def flows( self, state="", jsonFormat=True, timeout=60, noExit=False ):
         """
         Optional:
             * jsonFormat: enable output formatting in json
@@ -2022,16 +2283,20 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j "
             cmdStr += state
-
-            response = self.sendline( cmdStr, timeout = timeout )
-
-            return response
-
-        except pexpect.TIMEOUT:
-            main.log.error( self.name + ": ONOS timeout" )
+            handle = self.sendline( cmdStr, timeout=timeout, noExit=noExit )
+            assert "Command not found:" not in handle, handle
+            if re.search( "Error:", handle ):
+                main.log.error( self.name + ": flows() response: " +
+                                str( handle ) )
+            return handle
+        except AssertionError:
+            main.log.exception( "" )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
+            return None
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": ONOS timeout" )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2043,19 +2308,22 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
+    def checkFlowCount(self, min=0, timeout=60 ):
+        count = int(self.getTotalFlowsNum( timeout=timeout ))
+        return count if (count > min) else False
 
-    def checkFlowsState( self, isPENDING = True, timeout=60 ):
+    def checkFlowsState( self, isPENDING=True, timeout=60,noExit=False ):
         """
         Description:
             Check the if all the current flows are in ADDED state
-            We check PENDING_ADD, PENDING_REMOVE, REMOVED, and FAILED flows, if the count of those states is 0,
-            which means all current flows are in ADDED state, and return main.TRUE
-            otherwise return main.FALSE
+            We check PENDING_ADD, PENDING_REMOVE, REMOVED, and FAILED flows,
+            if the count of those states is 0, which means all current flows
+            are in ADDED state, and return main.TRUE otherwise return main.FALSE
         Optional:
             * isPENDING:  whether the PENDING_ADD is also a correct status
         Return:
             returnValue - Returns main.TRUE only if all flows are in
-                          ADDED state or PENDING_ADD if the isPENDING_ADD
+                          ADDED state or PENDING_ADD if the isPENDING
                           parameter is set true, return main.FALSE otherwise.
         """
         try:
@@ -2063,12 +2331,20 @@ class OnosCliDriver( CLI ):
             checkedStates = []
             statesCount = [0, 0, 0, 0]
             for s in states:
-                checkedStates.append( json.loads( self.flows( state=s, timeout = timeout ) ) )
-
-            for i in range (len( states )):
+                rawFlows = self.flows( state=s, timeout = timeout )
+                if rawFlows:
+                    # if we didn't get flows or flows function return None, we should return
+                    # main.Flase
+                    checkedStates.append( json.loads( rawFlows ) )
+                else:
+                    return main.FALSE
+            for i in range( len( states ) ):
                 for c in checkedStates[i]:
-                    statesCount[i] += int( c.get("flowCount"))
-                main.log.info(states[i] + " flows: "+ str( statesCount[i] ) )
+                    try:
+                        statesCount[i] += int( c.get( "flowCount" ) )
+                    except TypeError:
+                        main.log.exception( "Json object not as expected" )
+                main.log.info( states[i] + " flows: " + str( statesCount[i] ) )
 
             # We want to count PENDING_ADD if isPENDING is true
             if isPENDING:
@@ -2077,11 +2353,13 @@ class OnosCliDriver( CLI ):
             else:
                 if statesCount[0] + statesCount[1] + statesCount[2] + statesCount[3] > 0:
                     return main.FALSE
-
             return main.TRUE
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawFlows ) )
+            return None
 
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except AssertionError:
+            main.log.exception( "" )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2092,9 +2370,13 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": ONOS timeout" )
+            return None
+
 
     def pushTestIntents( self, ingress, egress, batchSize, offset="",
-                         options="", timeout=10, background = False ):
+                         options="", timeout=10, background = False, noExit=False, getResponse=False ):
         """
         Description:
             Push a number of intents in a batch format to
@@ -2106,6 +2388,9 @@ class OnosCliDriver( CLI ):
         Optional:
             * offset: the keyOffset is where the next batch of intents
                       will be installed
+            * noExit: If set to True, TestON will not exit if any error when issus command
+            * getResponse: If set to True, function will return ONOS response.
+
         Returns: If failed to push test intents, it will returen None,
                  if successful, return true.
                  Timeout expection will return None,
@@ -2118,19 +2403,26 @@ class OnosCliDriver( CLI ):
             else:
                 back = ""
             cmd = "push-test-intents {} {} {} {} {} {}".format( options,
-                                                             ingress,
-                                                             egress,
-                                                             batchSize,
-                                                             offset,
-                                                             back )
-            response = self.sendline( cmd, timeout=timeout )
+                                                                ingress,
+                                                                egress,
+                                                                batchSize,
+                                                                offset,
+                                                                back )
+            response = self.sendline( cmd, timeout=timeout, noExit=noExit )
+            assert "Command not found:" not in response, response
             main.log.info( response )
             if response == None:
                 return None
 
+            if getResponse:
+                return response
+
             # TODO: We should handle if there is failure in installation
             return main.TRUE
 
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except pexpect.TIMEOUT:
             main.log.error( self.name + ": ONOS timeout" )
             return None
@@ -2141,7 +2433,95 @@ class OnosCliDriver( CLI ):
             main.exit()
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
-            return main.FALSE
+            return None
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def getTotalFlowsNum( self, timeout=60, noExit=False ):
+        """
+        Description:
+            Get the number of ADDED flows.
+        Return:
+            The number of ADDED flows
+        """
+
+        try:
+            # get total added flows number
+            cmd = "flows -s|grep ADDED|wc -l"
+            totalFlows = self.sendline( cmd, timeout=timeout, noExit=noExit )
+
+            if totalFlows == None:
+                # if timeout, we will get total number of all flows, and subtract other states
+                states = ["PENDING_ADD", "PENDING_REMOVE", "REMOVED", "FAILED"]
+                checkedStates = []
+                totalFlows = 0
+                statesCount = [0, 0, 0, 0]
+
+                # get total flows from summary
+                response = json.loads( self.sendline( "summary -j", timeout=timeout, noExit=noExit ) )
+                totalFlows = int( response.get("flows") )
+
+                for s in states:
+                    rawFlows = self.flows( state=s, timeout = timeout )
+                    if rawFlows == None:
+                        # if timeout, return the total flows number from summary command
+                        return totalFlows
+                    checkedStates.append( json.loads( rawFlows ) )
+
+                # Calculate ADDED flows number, equal total subtracts others
+                for i in range( len( states ) ):
+                    for c in checkedStates[i]:
+                        try:
+                            statesCount[i] += int( c.get( "flowCount" ) )
+                        except TypeError:
+                            main.log.exception( "Json object not as expected" )
+                    totalFlows = totalFlows - int( statesCount[i] )
+                    main.log.info( states[i] + " flows: " + str( statesCount[i] ) )
+
+                return totalFlows
+
+            return int(totalFlows)
+
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawFlows ) )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": ONOS timeout" )
+            return None
+
+    def getTotalIntentsNum( self, timeout=60 ):
+        """
+        Description:
+            Get the total number of intents, include every states.
+        Return:
+            The number of intents
+        """
+        try:
+            cmd = "summary -j"
+            response = self.sendline( cmd, timeout=timeout )
+            if response == None:
+                return  -1
+            response = json.loads( response )
+            return int( response.get("intents") )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, response ) )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
         except Exception:
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
@@ -2158,7 +2538,11 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2183,6 +2567,7 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             if handle:
                 return handle
             elif jsonFormat:
@@ -2190,6 +2575,9 @@ class OnosCliDriver( CLI ):
                 return '{}'
             else:
                 return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2251,7 +2639,11 @@ class OnosCliDriver( CLI ):
             cmdStr = "flows any " + str( deviceId ) + " | " +\
                      "grep 'state=ADDED' | wc -l"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":    " + self.handle.before )
@@ -2320,16 +2712,15 @@ class OnosCliDriver( CLI ):
             nodesStr = self.nodes( jsonFormat=True )
             idList = []
             # Sample nodesStr output
-            # id=local, address=127.0.0.1:9876, state=ACTIVE *
+            # id=local, address=127.0.0.1:9876, state=READY *
             if not nodesStr:
                 main.log.info( "There are no nodes to get id from" )
                 return idList
             nodesJson = json.loads( nodesStr )
             idList = [ node.get('id') for node in nodesJson ]
             return idList
-
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, nodesStr ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2359,8 +2750,8 @@ class OnosCliDriver( CLI ):
                     if dpid in device[ 'id' ]:
                         return device
             return None
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawDevices ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2372,61 +2763,90 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def checkStatus( self, ip, numoswitch, numolink, logLevel="info" ):
+    def getTopology( self, topologyOutput ):
+        """
+        Definition:
+            Loads a json topology output
+        Return:
+            topology = current ONOS topology
+        """
+        import json
+        try:
+            # either onos:topology or 'topology' will work in CLI
+            topology = json.loads(topologyOutput)
+            main.log.debug( topology )
+            return topology
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, topologyOutput ) )
+            return None
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def checkStatus(self, numoswitch, numolink, numoctrl = -1, logLevel="info"):
         """
         Checks the number of switches & links that ONOS sees against the
         supplied values. By default this will report to main.log, but the
-        log level can be specified.
+        log level can be specific.
 
-        Params: ip = ip used for the onos cli
-                numoswitch = expected number of switches
+        Params: numoswitch = expected number of switches
                 numolink = expected number of links
-                logLevel = level to log to. Currently accepts
-                'info', 'warn' and 'report'
-
-
-        logLevel can
+                numoctrl = expected number of controllers
+                logLevel = level to log to.
+                Currently accepts 'info', 'warn' and 'report'
 
         Returns: main.TRUE if the number of switches and links are correct,
                  main.FALSE if the number of switches and links is incorrect,
                  and main.ERROR otherwise
         """
+        import json
         try:
-            topology = self.getTopology( ip )
-            if topology == {}:
+            topology = self.getTopology( self.topology() )
+            summary = json.loads( self.summary() )
+
+            if topology == {} or topology == None or summary == {} or summary == None:
                 return main.ERROR
             output = ""
             # Is the number of switches is what we expected
             devices = topology.get( 'devices', False )
             links = topology.get( 'links', False )
-            if devices is False or links is False:
+            nodes = summary.get( 'nodes', False )
+            if devices is False or links is False or nodes is False:
                 return main.ERROR
             switchCheck = ( int( devices ) == int( numoswitch ) )
             # Is the number of links is what we expected
             linkCheck = ( int( links ) == int( numolink ) )
-            if ( switchCheck and linkCheck ):
+            nodeCheck = ( int( nodes ) == int( numoctrl ) ) or int( numoctrl ) == -1
+            if switchCheck and linkCheck and nodeCheck:
                 # We expected the correct numbers
-                output += "The number of links and switches match " +\
-                          "what was expected"
+                output = output + "The number of links and switches match "\
+                    + "what was expected"
                 result = main.TRUE
             else:
-                output += "The number of links and switches does not match " +\
-                          "what was expected"
+                output = output + \
+                    "The number of links and switches does not match " + \
+                    "what was expected"
                 result = main.FALSE
-            output = output + "\n ONOS sees %i devices (%i expected) \
-                    and %i links (%i expected)" % (
-                int( devices ), int( numoswitch ), int( links ),
-                int( numolink ) )
+            output = output + "\n ONOS sees %i devices" % int( devices )
+            output = output + " (%i expected) " % int( numoswitch )
+            output = output + "and %i links " % int( links )
+            output = output + "(%i expected)" % int( numolink )
+            if int( numoctrl ) > 0:
+                output = output + "and %i controllers " % int( nodes )
+                output = output + "(%i expected)" % int( numoctrl )
             if logLevel == "report":
                 main.log.report( output )
             elif logLevel == "warn":
                 main.log.warn( output )
             else:
-                main.log.info( self.name + ": " + output )
+                main.log.info( output )
             return result
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
-            return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":    " + self.handle.before )
@@ -2456,6 +2876,7 @@ class OnosCliDriver( CLI ):
                     str( onosNode ) + " " +\
                     str( role )
                 handle = self.sendline( cmdStr )
+                assert "Command not found:" not in handle, handle
                 if re.search( "Error", handle ):
                     # end color output to escape any colours
                     # from the cli
@@ -2467,6 +2888,9 @@ class OnosCliDriver( CLI ):
                 main.log.error( "Invalid 'role' given to device_role(). " +
                                 "Value was '" + str(role) + "'." )
                 return main.FALSE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2491,7 +2915,11 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2516,6 +2944,7 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "election-test-leader"
             response = self.sendline( cmdStr )
+            assert "Command not found:" not in response, response
             # Leader
             leaderPattern = "The\scurrent\sleader\sfor\sthe\sElection\s" +\
                 "app\sis\s(?P<node>.+)\."
@@ -2534,16 +2963,13 @@ class OnosCliDriver( CLI ):
                                self.name )
                 return None
             # error
-            errorPattern = "Command\snot\sfound"
-            if re.search( errorPattern, response ):
-                main.log.error( "Election app is not loaded on " + self.name )
-                # TODO: Should this be main.ERROR?
-                return main.FALSE
-            else:
-                main.log.error( "Error in electionTestLeader on " + self.name +
-                                ": " + "unexpected response" )
-                main.log.error( repr( response ) )
-                return main.FALSE
+            main.log.error( "Error in electionTestLeader on " + self.name +
+                            ": " + "unexpected response" )
+            main.log.error( repr( response ) )
+            return main.FALSE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -2567,6 +2993,7 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "election-test-run"
             response = self.sendline( cmdStr )
+            assert "Command not found:" not in response, response
             # success
             successPattern = "Entering\sleadership\selections\sfor\sthe\s" +\
                 "Election\sapp."
@@ -2576,15 +3003,13 @@ class OnosCliDriver( CLI ):
                                "for the Election app." )
                 return main.TRUE
             # error
-            errorPattern = "Command\snot\sfound"
-            if re.search( errorPattern, response ):
-                main.log.error( "Election app is not loaded on " + self.name )
-                return main.FALSE
-            else:
-                main.log.error( "Error in electionTestRun on " + self.name +
-                                ": " + "unexpected response" )
-                main.log.error( repr( response ) )
-                return main.FALSE
+            main.log.error( "Error in electionTestRun on " + self.name +
+                            ": " + "unexpected response" )
+            main.log.error( repr( response ) )
+            return main.FALSE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -2609,6 +3034,7 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "election-test-withdraw"
             response = self.sendline( cmdStr )
+            assert "Command not found:" not in response, response
             # success
             successPattern = "Withdrawing\sfrom\sleadership\selections\sfor" +\
                 "\sthe\sElection\sapp."
@@ -2617,15 +3043,13 @@ class OnosCliDriver( CLI ):
                                "elections for the Election app." )
                 return main.TRUE
             # error
-            errorPattern = "Command\snot\sfound"
-            if re.search( errorPattern, response ):
-                main.log.error( "Election app is not loaded on " + self.name )
-                return main.FALSE
-            else:
-                main.log.error( "Error in electionTestWithdraw on " +
-                                self.name + ": " + "unexpected response" )
-                main.log.error( repr( response ) )
-                return main.FALSE
+            main.log.error( "Error in electionTestWithdraw on " +
+                            self.name + ": " + "unexpected response" )
+            main.log.error( repr( response ) )
+            return main.FALSE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -2647,11 +3071,15 @@ class OnosCliDriver( CLI ):
             dpid = str( dpid )
             cmdStr = "onos:ports -e " + dpid + " | wc -l"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             if re.search( "No such device", output ):
                 main.log.error( "Error in getting ports" )
                 return ( output, "Error" )
-            else:
-                return output
+            return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return ( output, "Error" )
@@ -2673,11 +3101,15 @@ class OnosCliDriver( CLI ):
             dpid = str( dpid )
             cmdStr = "onos:links " + dpid + " | grep ACTIVE | wc -l"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             if re.search( "No such device", output ):
                 main.log.error( "Error in getting ports " )
                 return ( output, "Error " )
-            else:
-                return output
+            return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return ( output, "Error " )
@@ -2698,11 +3130,15 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "onos:intents | grep id="
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             if re.search( "Error", output ):
                 main.log.error( "Error in getting ports" )
                 return ( output, "Error" )
-            else:
-                return output
+            return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return ( output, "Error" )
@@ -2728,8 +3164,8 @@ class OnosCliDriver( CLI ):
             out = [ ( i, states.count( i ) ) for i in set( states ) ]
             main.log.info( dict( out ) )
             return dict( out )
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, intents ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2752,7 +3188,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2777,7 +3218,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2791,7 +3237,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def specificLeaderCandidate(self,topic):
+    def specificLeaderCandidate( self, topic ):
         """
         Returns a list in format [leader,candidate1,candidate2,...] for a given
         topic parameter and an empty list if the topic doesn't exist
@@ -2799,19 +3245,24 @@ class OnosCliDriver( CLI ):
         Returns None if there is a type error processing the json object
         """
         try:
-            cmdStr = "onos:leaders -c -j"
-            output = self.sendline( cmdStr )
-            output = json.loads(output)
+            cmdStr = "onos:leaders -j"
+            rawOutput = self.sendline( cmdStr )
+            assert rawOutput is not None, "Error in sendline"
+            assert "Command not found:" not in rawOutput, rawOutput
+            output = json.loads( rawOutput )
             results = []
             for dict in output:
                 if dict["topic"] == topic:
                     leader = dict["leader"]
-                    candidates = re.split(", ",dict["candidates"][1:-1])
-                    results.append(leader)
-                    results.extend(candidates)
+                    candidates = re.split( ", ", dict["candidates"][1:-1] )
+                    results.append( leader )
+                    results.extend( candidates )
             return results
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except AssertionError:
+            main.log.exception( "" )
+            return None
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawOutput ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -2832,7 +3283,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2866,7 +3322,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             return output
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -2895,12 +3356,13 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             return output
         # FIXME: look at specific exceptions/Errors
         except AssertionError:
-            main.log.error( "Error in processing onos:app command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing onos:app command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -2944,8 +3406,8 @@ class OnosCliDriver( CLI ):
                 main.log.error( "Unexpected state from 'onos:apps': " +
                                 str( state ) )
                 return state
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, output ) )
             return None
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -3043,7 +3505,6 @@ class OnosCliDriver( CLI ):
                 response = self.app( appName, "activate" )
                 if check and response == main.TRUE:
                     for i in range(10):  # try 10 times then give up
-                        # TODO: Check with Thomas about this delay
                         status = self.appStatus( appName )
                         if status == "ACTIVE":
                             return main.TRUE
@@ -3202,11 +3663,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             return output
         except AssertionError:
-            main.log.error( "Error in processing onos:app-ids command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing onos:app-ids command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3236,17 +3698,17 @@ class OnosCliDriver( CLI ):
         """
         try:
             bail = False
-            ids = self.appIDs( jsonFormat=True )
-            if ids:
-                ids = json.loads( ids )
+            rawJson = self.appIDs( jsonFormat=True )
+            if rawJson:
+                ids = json.loads( rawJson )
             else:
-                main.log.error( "app-ids returned nothing:" + repr( ids ) )
+                main.log.error( "app-ids returned nothing:" + repr( rawJson ) )
                 bail = True
-            apps = self.apps( jsonFormat=True )
-            if apps:
-                apps = json.loads( apps )
+            rawJson = self.apps( jsonFormat=True )
+            if rawJson:
+                apps = json.loads( rawJson )
             else:
-                main.log.error( "apps returned nothing:" + repr( apps ) )
+                main.log.error( "apps returned nothing:" + repr( rawJson ) )
                 bail = True
             if bail:
                 return main.FALSE
@@ -3295,8 +3757,8 @@ class OnosCliDriver( CLI ):
                                                   separators=( ',', ': ' ) ) )
                     result = main.FALSE
             return result
-        except ( ValueError, TypeError ):
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, rawJson ) )
             return main.ERROR
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -3339,11 +3801,12 @@ class OnosCliDriver( CLI ):
             elif short:
                 baseStr += " -s"
             output = self.sendline( baseStr + cmdStr + componentStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             return output
         except AssertionError:
-            main.log.error( "Error in processing 'cfg get' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing 'cfg get' command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3380,7 +3843,9 @@ class OnosCliDriver( CLI ):
             if value is not None:
                 cmdStr += " " + str( value )
             output = self.sendline( baseStr + cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             if value and check:
                 results = self.getCfg( component=str( component ),
                                        propName=str( propName ),
@@ -3389,7 +3854,7 @@ class OnosCliDriver( CLI ):
                 try:
                     jsonOutput = json.loads( results )
                     current = jsonOutput[ 'value' ]
-                except ( ValueError, TypeError ):
+                except ( TypeError, ValueError ):
                     main.log.exception( "Error parsing cfg output" )
                     main.log.error( "output:" + repr( results ) )
                     return main.FALSE
@@ -3398,11 +3863,10 @@ class OnosCliDriver( CLI ):
                 return main.FALSE
             return main.TRUE
         except AssertionError:
-            main.log.error( "Error in processing 'cfg set' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing 'cfg set' command." )
             return main.FALSE
-        except TypeError:
-            main.log.exception( self.name + ": Object not as expected" )
+        except ( TypeError, ValueError ):
+            main.log.exception( "{}: Object not as expected: {!r}".format( self.name, results ) )
             return main.FALSE
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
@@ -3431,6 +3895,8 @@ class OnosCliDriver( CLI ):
         try:
             cmdStr = "set-test-add " + str( setName ) + " " + str( values )
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             try:
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
@@ -3445,6 +3911,7 @@ class OnosCliDriver( CLI ):
                                "seconds before retrying." )
                 time.sleep( retryTime )  # Due to change in mastership
                 output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
             assert "Error executing command" not in output
             positiveMatch = "\[(.*)\] was added to the set " + str( setName )
             negativeMatch = "\[(.*)\] was already in set " + str( setName )
@@ -3459,8 +3926,7 @@ class OnosCliDriver( CLI ):
                 main.log.debug( self.name + " actual: " + repr( output ) )
                 return main.ERROR
         except AssertionError:
-            main.log.error( "Error in processing '" + cmdStr + "' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing '" + cmdStr + "' command. " )
             return main.ERROR
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3500,6 +3966,7 @@ class OnosCliDriver( CLI ):
                 cmdStr += str( setName ) + " " + str( values )
             output = self.sendline( cmdStr )
             try:
+                assert output is not None, "Error in sendline"
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
                 assert "org.onosproject.store.service" not in output
@@ -3513,7 +3980,9 @@ class OnosCliDriver( CLI ):
                                "seconds before retrying." )
                 time.sleep( retryTime )  # Due to change in mastership
                 output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             main.log.info( self.name + ": " + output )
             if clear:
                 pattern = "Set " + str( setName ) + " cleared"
@@ -3548,8 +4017,7 @@ class OnosCliDriver( CLI ):
             main.log.debug( self.name + " actual: " + repr( output ) )
             return main.ERROR
         except AssertionError:
-            main.log.error( "Error in processing '" + cmdStr + "' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing '" + cmdStr + "' commandr. " )
             return main.ERROR
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3599,6 +4067,7 @@ class OnosCliDriver( CLI ):
             cmdStr += setName + " " + values
             output = self.sendline( cmdStr )
             try:
+                assert output is not None, "Error in sendline"
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
                 assert "org.onosproject.store.service" not in output
@@ -3612,7 +4081,9 @@ class OnosCliDriver( CLI ):
                                "seconds before retrying." )
                 time.sleep( retryTime )  # Due to change in mastership
                 output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             main.log.info( self.name + ": " + output )
 
             if length == 0:
@@ -3655,8 +4126,7 @@ class OnosCliDriver( CLI ):
                 main.log.debug( self.name + " actual: " + repr( output ) )
                 return main.ERROR
         except AssertionError:
-            main.log.error( "Error in processing '" + cmdStr + "' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing '" + cmdStr + "' command." )
             return main.ERROR
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3692,6 +4162,7 @@ class OnosCliDriver( CLI ):
             cmdStr += setName
             output = self.sendline( cmdStr )
             try:
+                assert output is not None, "Error in sendline"
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
                 assert "org.onosproject.store.service" not in output
@@ -3705,7 +4176,9 @@ class OnosCliDriver( CLI ):
                                "seconds before retrying." )
                 time.sleep( retryTime )  # Due to change in mastership
                 output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             main.log.info( self.name + ": " + output )
             match = re.search( pattern, output )
             if match:
@@ -3727,8 +4200,7 @@ class OnosCliDriver( CLI ):
                 main.log.debug( self.name + " actual: " + repr( output ) )
                 return None
         except AssertionError:
-            main.log.error( "Error in processing '" + cmdStr + "' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing '" + cmdStr + "' command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3758,12 +4230,13 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             main.log.info( self.name + ": " + output )
             return output
         except AssertionError:
-            main.log.error( "Error in processing 'counters' command: " +
-                            str( output ) )
+            main.log.exception( "Error in processing 'counters' command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3778,14 +4251,13 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def counterTestAddAndGet( self, counter, delta=1, inMemory=False ):
+    def counterTestAddAndGet( self, counter, delta=1 ):
         """
         CLI command to add a delta to then get a distributed counter.
         Required arguments:
             counter - The name of the counter to increment.
         Optional arguments:
             delta - The long to add to the counter
-            inMemory - use in memory map for the counter
         returns:
             integer value of the counter or
             None on Error
@@ -3794,13 +4266,12 @@ class OnosCliDriver( CLI ):
             counter = str( counter )
             delta = int( delta )
             cmdStr = "counter-test-increment "
-            if inMemory:
-                cmdStr += "-i "
             cmdStr += counter
             if delta != 1:
                 cmdStr += " " + str( delta )
             output = self.sendline( cmdStr )
             try:
+                assert output is not None, "Error in sendline"
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
                 assert "org.onosproject.store.service" not in output
@@ -3814,7 +4285,9 @@ class OnosCliDriver( CLI ):
                                "seconds before retrying." )
                 time.sleep( retryTime )  # Due to change in mastership
                 output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             main.log.info( self.name + ": " + output )
             pattern = counter + " was updated to (-?\d+)"
             match = re.search( pattern, output )
@@ -3827,8 +4300,7 @@ class OnosCliDriver( CLI ):
                 main.log.debug( self.name + " actual: " + repr( output ) )
                 return None
         except AssertionError:
-            main.log.error( "Error in processing '" + cmdStr + "'" +
-                            " command: " + str( output ) )
+            main.log.exception( "Error in processing '" + cmdStr + "' command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3843,14 +4315,13 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def counterTestGetAndAdd( self, counter, delta=1, inMemory=False ):
+    def counterTestGetAndAdd( self, counter, delta=1 ):
         """
         CLI command to get a distributed counter then add a delta to it.
         Required arguments:
             counter - The name of the counter to increment.
         Optional arguments:
             delta - The long to add to the counter
-            inMemory - use in memory map for the counter
         returns:
             integer value of the counter or
             None on Error
@@ -3859,13 +4330,12 @@ class OnosCliDriver( CLI ):
             counter = str( counter )
             delta = int( delta )
             cmdStr = "counter-test-increment -g "
-            if inMemory:
-                cmdStr += "-i "
             cmdStr += counter
             if delta != 1:
                 cmdStr += " " + str( delta )
             output = self.sendline( cmdStr )
             try:
+                assert output is not None, "Error in sendline"
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
                 assert "org.onosproject.store.service" not in output
@@ -3879,7 +4349,9 @@ class OnosCliDriver( CLI ):
                                "seconds before retrying." )
                 time.sleep( retryTime )  # Due to change in mastership
                 output = self.sendline( cmdStr )
-            assert "Error executing command" not in output
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
+            assert "Error executing command" not in output, output
             main.log.info( self.name + ": " + output )
             pattern = counter + " was updated to (-?\d+)"
             match = re.search( pattern, output )
@@ -3892,8 +4364,7 @@ class OnosCliDriver( CLI ):
                 main.log.debug( self.name + " actual: " + repr( output ) )
                 return None
         except AssertionError:
-            main.log.error( "Error in processing '" + cmdStr + "'" +
-                            " command: " + str( output ) )
+            main.log.exception( "Error in processing '" + cmdStr + "' command." )
             return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
@@ -3908,7 +4379,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def summary( self, jsonFormat=True ):
+    def summary( self, jsonFormat=True, timeout=30 ):
         """
         Description: Execute summary command in onos
         Returns: json object ( summary -j ), returns main.FALSE if there is
@@ -3919,16 +4390,18 @@ class OnosCliDriver( CLI ):
             cmdStr = "summary"
             if jsonFormat:
                 cmdStr += " -j"
-            handle = self.sendline( cmdStr )
-
-            if re.search( "Error:", handle ):
-                main.log.error( self.name + ": summary() response: " +
-                                str( handle ) )
+            handle = self.sendline( cmdStr, timeout=timeout )
+            assert handle is not None, "Error in sendline"
+            assert "Command not found:" not in handle, handle
+            assert "Error:" not in handle, handle
             if not handle:
                 main.log.error( self.name + ": There is no output in " +
                                 "summary command" )
                 return main.FALSE
             return handle
+        except AssertionError:
+            main.log.exception( "{} Error in summary output:".format( self.name ) )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -3942,15 +4415,13 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def transactionalMapGet( self, keyName, inMemory=False ):
+    def transactionalMapGet( self, keyName ):
         """
         CLI command to get the value of a key in a consistent map using
         transactions. This a test function and can only get keys from the
         test map hard coded into the cli command
         Required arguments:
             keyName - The name of the key to get
-        Optional arguments:
-            inMemory - use in memory map for the counter
         returns:
             The string value of the key or
             None on Error
@@ -3958,10 +4429,10 @@ class OnosCliDriver( CLI ):
         try:
             keyName = str( keyName )
             cmdStr = "transactional-map-test-get "
-            if inMemory:
-                cmdStr += "-i "
             cmdStr += keyName
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             try:
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
@@ -3974,6 +4445,7 @@ class OnosCliDriver( CLI ):
                 return None
             pattern = "Key-value pair \(" + keyName + ", (?P<value>.+)\) found."
             if "Key " + keyName + " not found." in output:
+                main.log.warn( output )
                 return None
             else:
                 match = re.search( pattern, output )
@@ -3985,6 +4457,9 @@ class OnosCliDriver( CLI ):
                     main.log.debug( self.name + " expected: " + pattern )
                     main.log.debug( self.name + " actual: " + repr( output ) )
                     return None
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -3998,7 +4473,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def transactionalMapPut( self, numKeys, value, inMemory=False ):
+    def transactionalMapPut( self, numKeys, value ):
         """
         CLI command to put a value into 'numKeys' number of keys in a
         consistent map using transactions. This a test function and can only
@@ -4006,8 +4481,6 @@ class OnosCliDriver( CLI ):
         Required arguments:
             numKeys - Number of keys to add the value to
             value - The string value to put into the keys
-        Optional arguments:
-            inMemory - use in memory map for the counter
         returns:
             A dictionary whose keys are the name of the keys put into the map
             and the values of the keys are dictionaries whose key-values are
@@ -4023,10 +4496,10 @@ class OnosCliDriver( CLI ):
             numKeys = str( numKeys )
             value = str( value )
             cmdStr = "transactional-map-test-put "
-            if inMemory:
-                cmdStr += "-i "
             cmdStr += numKeys + " " + value
             output = self.sendline( cmdStr )
+            assert output is not None, "Error in sendline"
+            assert "Command not found:" not in output, output
             try:
                 # TODO: Maybe make this less hardcoded
                 # ConsistentMap Exceptions
@@ -4047,13 +4520,18 @@ class OnosCliDriver( CLI ):
                     results[ new.groupdict()[ 'key' ] ] = { 'value': new.groupdict()[ 'value' ] }
                 elif updated:
                     results[ updated.groupdict()[ 'key' ] ] = { 'value': updated.groupdict()[ 'value' ],
-                                                            'oldValue': updated.groupdict()[ 'oldValue' ] }
+                                                                'oldValue': updated.groupdict()[ 'oldValue' ] }
                 else:
                     main.log.error( self.name + ": transactionlMapGet did not" +
                                     " match expected output." )
-                    main.log.debug( self.name + " expected: " + pattern )
+                    main.log.debug( "{} expected: {!r} or {!r}".format( self.name,
+                                                                        newPattern,
+                                                                        updatedPattern ) )
                     main.log.debug( self.name + " actual: " + repr( output ) )
             return results
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -4066,6 +4544,7 @@ class OnosCliDriver( CLI ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
+
     def maps( self, jsonFormat=True ):
         """
         Description: Returns result of onos:maps
@@ -4077,7 +4556,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmdStr += " -j"
             handle = self.sendline( cmdStr )
+            assert handle is not None, "Error in sendline"
+            assert "Command not found:" not in handle, handle
             return handle
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -4100,7 +4584,12 @@ class OnosCliDriver( CLI ):
             if jsonFormat:
                 cmd += "-j "
             response = self.sendline( cmd + uri )
+            assert response is not None, "Error in sendline"
+            assert "Command not found:" not in response, response
             return response
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return None
@@ -4157,15 +4646,16 @@ class OnosCliDriver( CLI ):
                         raise TypeError
                 else:
                     cmd += " {}:{}:{}".format( proto, item, port )
-
             response = self.sendline( cmd )
-
+            assert response is not None, "Error in sendline"
+            assert "Command not found:" not in response, response
             if "Error" in response:
                 main.log.error( response )
                 return main.FALSE
-
             return main.TRUE
-
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -4198,12 +4688,15 @@ class OnosCliDriver( CLI ):
             for d in device:
                 time.sleep( 1 )
                 response = self.sendline( "device-remove {}".format( d ) )
+                assert response is not None, "Error in sendline"
+                assert "Command not found:" not in response, response
                 if "Error" in response:
                     main.log.warn( "Error for device: {}\nResponse: {}".format( d, response ) )
                     return main.FALSE
-
             return main.TRUE
-
+        except AssertionError:
+            main.log.exception( "" )
+            return main.FALSE
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -4236,12 +4729,15 @@ class OnosCliDriver( CLI ):
             for h in host:
                 time.sleep( 1 )
                 response = self.sendline( "host-remove {}".format( h ) )
+                assert response is not None, "Error in sendline"
+                assert "Command not found:" not in response, response
                 if "Error" in response:
                     main.log.warn( "Error for host: {}\nResponse: {}".format( h, response ) )
                     return main.FALSE
-
             return main.TRUE
-
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -4255,7 +4751,7 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
-    def link( self, begin, end, state):
+    def link( self, begin, end, state, timeout=30, showResponse=True ):
         '''
         Description:
             Bring link down or up in the null-provider.
@@ -4267,14 +4763,17 @@ class OnosCliDriver( CLI ):
             present in the resoponse. Otherwise, returns main.FALSE
         '''
         try:
-            cmd =  "null-link null:{} null:{} {}".format(begin, end, state)
-            response = self.sendline( cmd, showResponse=True )
-
+            cmd =  "null-link null:{} null:{} {}".format( begin, end, state )
+            response = self.sendline( cmd, showResponse=showResponse, timeout=timeout )
+            assert response is not None, "Error in sendline"
+            assert "Command not found:" not in response, response
             if "Error" in response or "Failure" in response:
                 main.log.error( response )
                 return main.FALSE
-
             return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
         except TypeError:
             main.log.exception( self.name + ": Object not as expected" )
             return main.FALSE
@@ -4288,3 +4787,71 @@ class OnosCliDriver( CLI ):
             main.cleanup()
             main.exit()
 
+    def portstate(self, dpid='of:0000000000000102', port='2', state='enable'):
+        '''
+        Description:
+             Changes the state of port in an OF switch by means of the
+             PORTSTATUS OF messages.
+        params:
+            dpid - (string) Datapath ID of the device
+            port - (string) target port in the device
+            state - (string) target state (enable or disabled)
+        returns:
+            main.TRUE if no exceptions were thrown and no Errors are
+            present in the resoponse. Otherwise, returns main.FALSE
+        '''
+        try:
+            cmd =  "portstate {} {} {}".format( dpid, port, state )
+            response = self.sendline( cmd, showResponse=True )
+            assert response is not None, "Error in sendline"
+            assert "Command not found:" not in response, response
+            if "Error" in response or "Failure" in response:
+                main.log.error( response )
+                return main.FALSE
+            return main.TRUE
+        except AssertionError:
+            main.log.exception( "" )
+            return None
+        except TypeError:
+            main.log.exception( self.name + ": Object not as expected" )
+            return main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+
+    def logSet( self, level="INFO", app="org.onosproject" ):
+        """
+        Set the logging level to lvl for a specific app
+        returns main.TRUE on success
+        returns main.FALSE if Error occurred
+        if noExit is True, TestON will not exit, but clean up
+        Available level: DEBUG, TRACE, INFO, WARN, ERROR
+        Level defaults to INFO
+        """
+        try:
+            self.handle.sendline( "log:set %s %s" %( level, app ) )
+            self.handle.expect( "onos>" )
+
+            response = self.handle.before
+            if re.search( "Error", response ):
+                return main.FALSE
+            return main.TRUE
+        except pexpect.TIMEOUT:
+            main.log.exception( self.name + ": TIMEOUT exception found" )
+            main.cleanup()
+            main.exit()
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":    " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()

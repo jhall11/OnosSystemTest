@@ -126,7 +126,7 @@ class MininetCliDriver( Emulator ):
             Starts Mininet accepts a topology(.py) file and/or an optional
             argument, to start the mininet, as a parameter.
             Can also send regular mininet command to load up desired topology.
-            Eg. Pass in a string 'sudo mn --topo=tree,3,3' to mnCmd
+            Eg. Pass in a string 'mn --topo=tree,3,3' to mnCmd
         Options:
             topoFile = file path for topology file (.py)
             args = extra option added when starting the topology from the file
@@ -181,7 +181,7 @@ class MininetCliDriver( Emulator ):
                     main.log.info(
                         "Starting Mininet from topo file " +
                         topoFile )
-                    cmdString += topoFile + " "
+                    cmdString +=  "-E python " + topoFile + " "
                     if args is None:
                         args = ''
                         # TODO: allow use of args from .topo file?
@@ -357,7 +357,7 @@ class MininetCliDriver( Emulator ):
                                         ":     " +
                                         str( response ) )
                         # NOTE: Send ctrl-c to make sure pingall is done
-                        self.handle.sendline( "\x03" )
+                        self.handle.send( "\x03" )
                         self.handle.expect( "Interrupt" )
                         self.handle.expect( "mininet>" )
                         break
@@ -369,7 +369,7 @@ class MininetCliDriver( Emulator ):
                     return returnValue
                 else:
                     # NOTE: Send ctrl-c to make sure pingall is done
-                    self.handle.sendline( "\x03" )
+                    self.handle.send( "\x03" )
                     self.handle.expect( "Interrupt" )
                     self.handle.expect( "mininet>" )
                     return main.FALSE
@@ -494,7 +494,7 @@ class MininetCliDriver( Emulator ):
 
                 for temp in pingList:
                     # Current host pings all other hosts specified
-                    pingCmd = str( host ) + cmd + prefix + str( temp[1:] )
+                    pingCmd = str( host ) + cmd + str( self.getIPAddress(temp,proto='IPv6') )
                     self.handle.sendline( pingCmd )
                     self.handle.expect( "mininet>", timeout=wait + 1 )
                     response = self.handle.before
@@ -616,6 +616,60 @@ class MininetCliDriver( Emulator ):
             main.log.exception( self.name + ": Uncaught exception!" )
             main.cleanup()
             main.exit()
+
+    def pingHostSetAlternative( self, dstIPList, wait=1, IPv6=False ):
+        """
+        Description:
+            Ping a set of destination host from host CLI.
+            Logging into a Mininet host CLI is required before calling this funtion.
+        Params:
+            dstIPList is a list of destination ip addresses
+        Returns:
+            main.TRUE if the destination host is reachable
+            main.FALSE otherwise
+        """
+        isReachable = main.TRUE
+        wait = int( wait )
+        cmd = "ping"
+        if IPv6:
+            cmd = cmd + "6"
+        cmd = cmd + " -c 1 -i 1 -W " + str( wait )
+        try:
+            for dstIP in dstIPList:
+                pingCmd = cmd + " " + dstIP
+                self.handle.sendline( pingCmd )
+                i = self.handle.expect( [ self.hostPrompt,
+                                          '\*\*\* Unknown command: ' + pingCmd,
+                                          pexpect.TIMEOUT ],
+                                        timeout=wait + 1 )
+                if i == 0:
+                    response = self.handle.before
+                    if not re.search( ',\s0\%\spacket\sloss', response ):
+                        main.log.debug( "Ping failed between %s and %s" % ( self.name, dstIP ) )
+                        isReachable = main.FALSE
+                elif i == 1:
+                    main.log.error( self.name + ": function should be called from host CLI instead of Mininet CLI" )
+                    main.cleanup()
+                    main.exit()
+                elif i == 2:
+                    main.log.error( self.name + ": timeout when waiting for response" )
+                    isReachable = main.FALSE
+                else:
+                    main.log.error( self.name + ": unknown response: " + self.handle.before )
+                    isReachable = main.FALSE
+        except pexpect.TIMEOUT:
+            main.log.exception( self.name + ": TIMEOUT exception" )
+            isReachable = main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":     " + self.handle.before )
+            main.cleanup()
+            main.exit()
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
+        return isReachable
 
     def checkIP( self, host ):
         """
@@ -772,6 +826,113 @@ class MininetCliDriver( Emulator ):
                 main.log.error( self.name + ":     " + self.handle.before )
                 return main.FALSE
 
+    def moveHostv6( self, host, oldSw, newSw, ):
+        """
+           Moves a host from one switch to another on the fly
+           Note: The intf between host and oldSw when detached
+                using detach(), will still show up in the 'net'
+                cmd, because switch.detach() doesn't affect switch.intfs[]
+                ( which is correct behavior since the interfaces
+                haven't moved ).
+        """
+        if self.handle:
+            try:
+                IP = str( self.getIPAddress( host, proto='IPV6' ) ) + "/64"
+                # Bring link between oldSw-host down
+                cmd = "py net.configLinkStatus('" + oldSw + "'," + "'" + host +\
+                      "'," + "'down')"
+                print "cmd1= ", cmd
+                response = self.execute( cmd=cmd,
+                                         prompt="mininet>",
+                                         timeout=10 )
+
+                # Determine hostintf and Oldswitchintf
+                cmd = "px hintf,sintf = " + host + ".connectionsTo(" + oldSw +\
+                      ")[0]"
+                print "cmd2= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Determine ip and mac address of the host-oldSw interface
+                cmd = "px ipaddr = " + str(IP)
+                print "cmd3= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                cmd = "px macaddr = hintf.MAC()"
+                print "cmd3= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Detach interface between oldSw-host
+                cmd = "px " + oldSw + ".detach( sintf )"
+                print "cmd4= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Add link between host-newSw
+                cmd = "py net.addLink(" + host + "," + newSw + ")"
+                print "cmd5= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Determine hostintf and Newswitchintf
+                cmd = "px hintf,sintf = " + host + ".connectionsTo(" + newSw +\
+                      ")[0]"
+                print "cmd6= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Attach interface between newSw-host
+                cmd = "px " + newSw + ".attach( sintf )"
+                print "cmd6= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Set macaddress of the host-newSw interface
+                cmd = "px " + host + ".setMAC( mac = macaddr, intf = hintf)"
+                print "cmd7 = ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                # Set ipaddress of the host-newSw interface
+                cmd = "px " + host + ".setIP( ip = ipaddr, intf = hintf)"
+                print "cmd8 = ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                cmd = host + " ifconfig"
+                print "cmd9 =",cmd
+                response = self.execute( cmd = cmd, prompt="mininet>" ,timeout=10 )
+                print response
+                pattern = "h\d-eth([\w])"
+                ipAddressSearch = re.search( pattern, response )
+                print ipAddressSearch.group(1)
+                intf= host + "-eth" + str(ipAddressSearch.group(1))
+                cmd = host + " ip -6 addr add %s dev %s" % ( IP, intf )
+                print "cmd10 = ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+
+                cmd = "net"
+                print "cmd11 = ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+                print "output = ", self.handle.before
+
+                # Determine ipaddress of the host-newSw interface
+                cmd = host + " ifconfig"
+                print "cmd12= ", cmd
+                self.handle.sendline( cmd )
+                self.handle.expect( "mininet>" )
+                print "ifconfig o/p = ", self.handle.before
+
+                return main.TRUE
+            except pexpect.EOF:
+                main.log.error( self.name + ": EOF exception found" )
+                main.log.error( self.name + ":     " + self.handle.before )
+                return main.FALSE
+
     def changeIP( self, host, intf, newIP, newNetmask ):
         """
            Changes the ip address of a host on the fly
@@ -915,7 +1076,7 @@ class MininetCliDriver( Emulator ):
         else:
             main.log.error( "Connection failed to the host" )
 
-    def getIPAddress( self, host ):
+    def getIPAddress( self, host , proto='IPV4'):
         """
            Verifies the host's ip configured or not."""
         if self.handle:
@@ -931,7 +1092,11 @@ class MininetCliDriver( Emulator ):
                 main.cleanup()
                 main.exit()
 
-            pattern = "inet\saddr:(\d+\.\d+\.\d+\.\d+)"
+            pattern = ''
+            if proto == 'IPV4':
+                pattern = "inet\saddr:(\d+\.\d+\.\d+\.\d+)"
+            else:
+                pattern = "inet6\saddr:\s([\w,:]*)/\d+\sScope:Global"
             ipAddressSearch = re.search( pattern, response )
             main.log.info(
                 self.name +
@@ -1048,11 +1213,11 @@ class MininetCliDriver( Emulator ):
             main.exit()
         return response
 
-    def links( self ):
+    def links( self, timeout=20 ):
         main.log.info( self.name + ": List network links" )
         try:
             response = self.execute( cmd='links', prompt='mininet>',
-                                     timeout=20 )
+                                     timeout=timeout )
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":     " + self.handle.before )
@@ -1129,6 +1294,39 @@ class MininetCliDriver( Emulator ):
         except pexpect.EOF:
             main.log.error( self.name + ": EOF exception found" )
             main.log.error( self.name + ":     " + self.handle.before )
+            main.cleanup()
+            main.exit()
+
+    def iperftcpipv6(self, host1="h1", host2="h2", timeout=50):
+        main.log.info( self.name + ": Simple iperf TCP test between two hosts" )
+        try:
+            IP1 = self.getIPAddress( host1, proto='IPV6' )
+            cmd1 = host1 +' iperf -V -sD -B '+ str(IP1)
+            self.handle.sendline( cmd1 )
+            outcome1 = self.handle.expect( "mininet>")
+            cmd2 = host2 +' iperf -V -c '+ str(IP1) +' -t 5'
+            self.handle.sendline( cmd2 )
+            outcome2 = self.handle.expect( "mininet>")
+            response1 = self.handle.before
+            response2 = self.handle.after
+            print response1,response2
+            pattern = "connected with "+ str(IP1)
+            if pattern in response1:
+                main.log.report(self.name + ": iperf test completed")
+                return main.TRUE
+            else:
+                main.log.error( self.name + ": iperf test failed" )
+                return main.FALSE
+        except pexpect.TIMEOUT:
+            main.log.error( self.name + ": TIMEOUT exception found" )
+            main.log.error( self.name + " response: " + repr( self.handle.before ) )
+            self.handle.sendline( "\x03" )
+            self.handle.expect( "Interrupt" )
+            self.handle.expect( "mininet>" )
+            return main.FALSE
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ": " + self.handle.before )
             main.cleanup()
             main.exit()
 
@@ -1300,6 +1498,9 @@ class MininetCliDriver( Emulator ):
         try:
             response = self.execute( cmd = command, prompt = "mininet>" )
             if re.search( "Unknown command", response ):
+                main.log.warn( response )
+                return main.FALSE
+            if re.search( "Permission denied", response ):
                 main.log.warn( response )
                 return main.FALSE
         except pexpect.TIMEOUT:
@@ -1804,17 +2005,17 @@ class MininetCliDriver( Emulator ):
                                         timeout )
                 if i == 0:
                     main.log.info( "Exiting mininet..." )
-                response = self.execute(
-                    cmd="exit",
-                    prompt="(.*)",
-                    timeout=120 )
-                main.log.info( self.name + ": Stopped" )
-                self.handle.sendline( "sudo mn -c" )
-                response = main.TRUE
+                    response = self.execute( cmd="exit",
+                                             prompt="(.*)",
+                                             timeout=120 )
+                    main.log.info( self.name + ": Stopped" )
+                    self.handle.sendline( "sudo mn -c" )
+                    response = main.TRUE
 
-                if i == 1:
+                elif i == 1:
                     main.log.info( " Mininet trying to exit while not " +
                                    "in the mininet prompt" )
+                    response = main.TRUE
                 elif i == 2:
                     main.log.error( "Something went wrong exiting mininet" )
                 elif i == 3:  # timeout
@@ -1838,7 +2039,7 @@ class MininetCliDriver( Emulator ):
             response = main.FALSE
         return response
 
-    def arping( self, srcHost="", dstHost="10.128.20.211", ethDevice="" ):
+    def arping( self, srcHost="", dstHost="10.128.20.211", ethDevice="", output=True, noResult=False ):
         """
         Description:
             Sends arp message from mininet host for hosts discovery
@@ -1850,9 +2051,13 @@ class MininetCliDriver( Emulator ):
         """
         if ethDevice:
             ethDevice = '-I ' + ethDevice + ' '
-        cmd = srcHost + " arping -c1 " + ethDevice + dstHost
+        cmd = srcHost + " arping -c1 "
+        if noResult:
+            cmd += "-w10 " # If we don't want the actural arping result, set -w10, arping will exit after 10 ms.
+        cmd += ethDevice + dstHost
         try:
-            main.log.info( "Sending: " + cmd )
+            if output:
+                main.log.info( "Sending: " + cmd )
             self.handle.sendline( cmd )
             i = self.handle.expect( [ "mininet>", "arping: " ] )
             if i == 0:
@@ -1903,31 +2108,54 @@ class MininetCliDriver( Emulator ):
         else:
             main.log.error( "Connection failed to the Mininet host" )
 
+    def checkFlows( self, sw, dumpFormat=None ):
+        if dumpFormat:
+            command = "sh ovs-ofctl -F " + \
+                dumpFormat + " dump-flows " + str( sw )
+        else:
+            command = "sh ovs-ofctl dump-flows " + str( sw )
+        try:
+            response = self.execute(
+                cmd=command,
+                prompt="mininet>",
+                timeout=10 )
+            return response
+        except pexpect.EOF:
+            main.log.error( self.name + ": EOF exception found" )
+            main.log.error( self.name + ":     " + self.handle.before )
+            main.cleanup()
+            main.exit()
+
     def flowTableComp( self, flowTable1, flowTable2 ):
         # This function compares the selctors and treatments of each flow
         try:
+            assert flowTable1, "flowTable1 is empty or None"
+            assert flowTable2, "flowTable2 is empty or None"
+            returnValue = main.TRUE
             if len(flowTable1) != len(flowTable2):
                 main.log.warn( "Flow table lengths do not match" )
-                return main.FALSE
+                returnValue = main.FALSE
             dFields = ["n_bytes", "cookie", "n_packets", "duration"]
             for flow1, flow2 in zip(flowTable1, flowTable2):
                 for field in dFields:
                     try:
                         flow1.pop( field )
-                    except KeyError as e:
-                        main.log.warn( e )
-                        main.log.debug( flow1 )
+                    except KeyError:
+                        pass
                     try:
                         flow2.pop( field )
-                    except KeyError as e:
-                        main.log.warn( e )
-                        main.log.debug( flow2 )
+                    except KeyError:
+                        pass
             for i in range( len(flowTable1) ):
                 if flowTable1[i] not in flowTable2:
                     main.log.warn( "Flow tables do not match:" )
                     main.log.warn( "Old flow:\n{}\n not in new flow table".format( flowTable1[i] ) )
-                    return main.FALSE
-            return main.TRUE
+                    returnValue = main.FALSE
+                    break
+            return returnValue
+        except AssertionError:
+            main.log.exception( "Nothing to compare" )
+            return main.FALSE
         except Exception:
             main.log.exception( "Uncaught exception!" )
             main.cleanup()
@@ -1946,71 +2174,80 @@ class MininetCliDriver( Emulator ):
         returns: A list of flows in json format
         '''
         jsonFlowTable = []
-        for flow in flowTable:
-            jsonFlow = {}
-            # split up the fields of the flow
-            parsedFlow = flow.split(", ")
-            # get rid of any spaces in front of the field
-            for i in range( len(parsedFlow) ):
-                item = parsedFlow[i]
-                if item[0] == " ":
-                    parsedFlow[i] = item[1:]
-            # grab the selector and treatment from the parsed flow
-            # the last element is the selector and the treatment
-            temp = parsedFlow.pop(-1)
-            # split up the selector and the treatment
-            temp = temp.split(" ")
-            index = 0
-            # parse the flags
-            # NOTE: This only parses one flag
-            flag = {}
-            if version == "1.3":
-                flag = {"flag":[temp[index]]}
+        try:
+            for flow in flowTable:
+                jsonFlow = {}
+                # split up the fields of the flow
+                parsedFlow = flow.split(", ")
+                # get rid of any spaces in front of the field
+                for i in range( len(parsedFlow) ):
+                    item = parsedFlow[i]
+                    if item[0] == " ":
+                        parsedFlow[i] = item[1:]
+                # grab the selector and treatment from the parsed flow
+                # the last element is the selector and the treatment
+                temp = parsedFlow.pop(-1)
+                # split up the selector and the treatment
+                temp = temp.split(" ")
+                index = 0
+                # parse the flags
+                # NOTE: This only parses one flag
+                flag = {}
+                if version == "1.3":
+                    flag = {"flag":[temp[index]]}
+                    index += 1
+                # the first element is the selector and split it up
+                sel = temp[index]
                 index += 1
-            # the first element is the selector and split it up
-            sel = temp[index]
-            index += 1
-            sel = sel.split(",")
-            # the priority is stuck in the selecter so put it back
-            # in the flow
-            parsedFlow.append(sel.pop(0))
-            # parse selector
-            criteria = []
-            for item in sel:
-                # this is the type of the packet e.g. "arp"
-                if "=" not in item:
-                    criteria.append( {"type":item} )
-                else:
+                sel = sel.split(",")
+                # the priority is stuck in the selecter so put it back
+                # in the flow
+                parsedFlow.append(sel.pop(0))
+                # parse selector
+                criteria = []
+                for item in sel:
+                    # this is the type of the packet e.g. "arp"
+                    if "=" not in item:
+                        criteria.append( {"type":item} )
+                    else:
+                        field = item.split("=")
+                        criteria.append( {field[0]:field[1]} )
+                selector = {"selector": {"criteria":sorted(criteria)} }
+                treat = temp[index]
+                # get rid of the action part e.g. "action=output:2"
+                # we will add it back later
+                treat = treat.split("=")
+                treat.pop(0)
+                # parse treatment
+                action = []
+                for item in treat:
+                    field = item.split(":")
+                    action.append( {field[0]:field[1]} )
+                # create the treatment field and add the actions
+                treatment = {"treatment": {"action":sorted(action)} }
+                # parse the rest of the flow
+                for item in parsedFlow:
                     field = item.split("=")
-                    criteria.append( {field[0]:field[1]} )
-            selector = {"selector": {"criteria":sorted(criteria)} }
-            treat = temp[index]
-            # get rid of the action part e.g. "action=output:2"
-            # we will add it back later
-            treat = treat.split("=")
-            treat.pop(0)
-            # parse treatment
-            action = []
-            for item in treat:
-                field = item.split(":")
-                action.append( {field[0]:field[1]} )
-            # create the treatment field and add the actions
-            treatment = {"treatment": {"action":sorted(action)} }
-            # parse the rest of the flow
-            for item in parsedFlow:
-                field = item.split("=")
-                jsonFlow.update( {field[0]:field[1]} )
-            # add the treatment and the selector to the json flow
-            jsonFlow.update( selector )
-            jsonFlow.update( treatment )
-            jsonFlow.update( flag )
+                    jsonFlow.update( {field[0]:field[1]} )
+                # add the treatment and the selector to the json flow
+                jsonFlow.update( selector )
+                jsonFlow.update( treatment )
+                jsonFlow.update( flag )
 
-            if debug: main.log.debug( "\033[94mJson flow:\033[0m\n{}\n".format(jsonFlow) )
+                if debug: main.log.debug( "\033[94mJson flow:\033[0m\n{}\n".format(jsonFlow) )
 
-            # add the json flow to the json flow table
-            jsonFlowTable.append( jsonFlow )
+                # add the json flow to the json flow table
+                jsonFlowTable.append( jsonFlow )
 
-        return jsonFlowTable
+            return jsonFlowTable
+
+        except IndexError:
+            main.log.exception( self.name + ": IndexError found" )
+            return None
+        except Exception:
+            main.log.exception( self.name + ": Uncaught exception!" )
+            main.cleanup()
+            main.exit()
 
     def getFlowTable( self, sw, version="", debug=False):
         '''
@@ -2084,6 +2321,8 @@ class MininetCliDriver( Emulator ):
         try:
             main.log.info( "Getting flows from Mininet" )
             flows = self.getFlowTable( sw, version, debug )
+            if flows == None:
+                return main.ERROR
 
             if debug: print "flow ids:\n{}\n\n".format(flowId)
 
@@ -2343,7 +2582,7 @@ class MininetCliDriver( Emulator ):
                 hosts[ name ] = { "interfaces": interfaces }
         return hosts
 
-    def getLinks( self ):
+    def getLinks( self, timeout=20 ):
         """
         Gathers information about current Mininet links. These links may not
         be up if one of the ports is down.
@@ -2360,7 +2599,7 @@ class MininetCliDriver( Emulator ):
               hosts, this is just the eth#.
         """
         self.update()
-        response = self.links().split( '\n' )
+        response = self.links(timeout=timeout).split( '\n' )
 
         # Examples:
         # s1-eth3<->s2-eth1 (OK OK)
@@ -2881,624 +3120,6 @@ class MininetCliDriver( Emulator ):
             main.cleanup()
             main.exit()
 
-    def startScapy( self, mplsPath="" ):
-        """
-        Start the Scapy cli
-        optional:
-            mplsPath - The path where the MPLS class is located
-            NOTE: This can be a relative path from the user's home dir
-        """
-        mplsLines = ['import imp',
-            'imp.load_source( "mplsClass", "{}mplsClass.py" )'.format(mplsPath),
-            'from mplsClass import MPLS',
-            'bind_layers(Ether, MPLS, type = 0x8847)',
-            'bind_layers(MPLS, MPLS, bottom_of_label_stack = 0)',
-            'bind_layers(MPLS, IP)']
-
-        try:
-            self.handle.sendline( "scapy" )
-            self.handle.expect( self.scapyPrompt )
-            self.handle.sendline( "conf.color_theme = NoTheme()" )
-            self.handle.expect( self.scapyPrompt )
-            if mplsPath:
-                main.log.info( "Adding MPLS class" )
-                main.log.info( "MPLS class path: " + mplsPath )
-                for line in mplsLines:
-                    main.log.info( "sending line: " + line )
-                    self.handle.sendline( line )
-                    self.handle.expect( self.scapyPrompt )
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def stopScapy( self ):
-        """
-        Exit the Scapy cli
-        """
-        try:
-            self.handle.sendline( "exit()" )
-            self.handle.expect( self.hostPrompt )
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def buildEther( self, **kwargs ):
-        """
-        Build an Ethernet frame
-
-        Will create a frame class with the given options. If a field is
-        left blank it will default to the below value unless it is
-        overwritten by the next frame.
-        Default frame:
-        ###[ Ethernet ]###
-          dst= ff:ff:ff:ff:ff:ff
-          src= 00:00:00:00:00:00
-          type= 0x800
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # Set the Ethernet frame
-            cmd = 'ether = Ether( '
-            options = []
-            for key, value in kwargs.iteritems():
-                if isinstance( value, str ):
-                    value = '"' + value + '"'
-                options.append( str( key ) + "=" + str( value ) )
-            cmd += ", ".join( options )
-            cmd += ' )'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            self.handle.sendline( "packet = ether" )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def buildIP( self, **kwargs ):
-        """
-        Build an IP frame
-
-        Will create a frame class with the given options. If a field is
-        left blank it will default to the below value unless it is
-        overwritten by the next frame.
-        Default frame:
-        ###[ IP ]###
-          version= 4
-          ihl= None
-          tos= 0x0
-          len= None
-          id= 1
-          flags=
-          frag= 0
-          ttl= 64
-          proto= hopopt
-          chksum= None
-          src= 127.0.0.1
-          dst= 127.0.0.1
-          \options\
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # Set the IP frame
-            cmd = 'ip = IP( '
-            options = []
-            for key, value in kwargs.iteritems():
-                if isinstance( value, str ):
-                    value = '"' + value + '"'
-                options.append( str( key ) + "=" + str( value ) )
-            cmd += ", ".join( options )
-            cmd += ' )'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            self.handle.sendline( "packet = ether/ip" )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def buildIPv6( self, **kwargs ):
-        """
-        Build an IPv6 frame
-
-        Will create a frame class with the given options. If a field is
-        left blank it will default to the below value unless it is
-        overwritten by the next frame.
-        Default frame:
-        ###[ IPv6 ]###
-          version= 6
-          tc= 0
-          fl= 0
-          plen= None
-          nh= No Next Header
-          hlim= 64
-          src= ::1
-          dst= ::1
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # Set the IPv6 frame
-            cmd = 'ipv6 = IPv6( '
-            options = []
-            for key, value in kwargs.iteritems():
-                if isinstance( value, str ):
-                    value = '"' + value + '"'
-                options.append( str( key ) + "=" + str( value ) )
-            cmd += ", ".join( options )
-            cmd += ' )'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            self.handle.sendline( "packet = ether/ipv6" )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def buildTCP( self, ipVersion=4, **kwargs ):
-        """
-        Build an TCP frame
-
-        Will create a frame class with the given options. If a field is
-        left blank it will default to the below value unless it is
-        overwritten by the next frame.
-
-        NOTE: Some arguments require quotes around them. It's up to you to
-        know which ones and to add them yourself. Arguments with an asterisk
-        do not need quotes.
-
-        Options:
-        ipVersion - Either 4 (default) or 6, indicates what Internet Protocol
-                    frame to use to encapsulate into
-        Default frame:
-        ###[ TCP ]###
-          sport= ftp_data *
-          dport= http *
-          seq= 0
-          ack= 0
-          dataofs= None
-          reserved= 0
-          flags= S
-          window= 8192
-          chksum= None
-          urgptr= 0
-          options= {}
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # Set the TCP frame
-            cmd = 'tcp = TCP( '
-            options = []
-            for key, value in kwargs.iteritems():
-                options.append( str( key ) + "=" + str( value ) )
-            cmd += ", ".join( options )
-            cmd += ' )'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            if str( ipVersion ) is '4':
-                self.handle.sendline( "packet = ether/ip/tcp" )
-            elif str( ipVersion ) is '6':
-                self.handle.sendline( "packet = ether/ipv6/tcp" )
-            else:
-                main.log.error( "Unrecognized option for ipVersion, given " +
-                                repr( ipVersion ) )
-                return main.FALSE
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def buildUDP( self, ipVersion=4, **kwargs ):
-        """
-        Build an UDP frame
-
-        Will create a frame class with the given options. If a field is
-        left blank it will default to the below value unless it is
-        overwritten by the next frame.
-
-        NOTE: Some arguments require quotes around them. It's up to you to
-        know which ones and to add them yourself. Arguments with an asterisk
-        do not need quotes.
-
-        Options:
-        ipVersion - Either 4 (default) or 6, indicates what Internet Protocol
-                    frame to use to encapsulate into
-        Default frame:
-        ###[ UDP ]###
-          sport= domain *
-          dport= domain *
-          len= None
-          chksum= None
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # Set the UDP frame
-            cmd = 'udp = UDP( '
-            options = []
-            for key, value in kwargs.iteritems():
-                options.append( str( key ) + "=" + str( value ) )
-            cmd += ", ".join( options )
-            cmd += ' )'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            if str( ipVersion ) is '4':
-                self.handle.sendline( "packet = ether/ip/udp" )
-            elif str( ipVersion ) is '6':
-                self.handle.sendline( "packet = ether/ipv6/udp" )
-            else:
-                main.log.error( "Unrecognized option for ipVersion, given " +
-                                repr( ipVersion ) )
-                return main.FALSE
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def buildICMP( self, **kwargs ):
-        """
-        Build an ICMP frame
-
-        Will create a frame class with the given options. If a field is
-        left blank it will default to the below value unless it is
-        overwritten by the next frame.
-        Default frame:
-        ###[ ICMP ]###
-          type= echo-request
-          code= 0
-          chksum= None
-          id= 0x0
-          seq= 0x0
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # Set the ICMP frame
-            cmd = 'icmp = ICMP( '
-            options = []
-            for key, value in kwargs.iteritems():
-                if isinstance( value, str ):
-                    value = '"' + value + '"'
-                options.append( str( key ) + "=" + str( value ) )
-            cmd += ", ".join( options )
-            cmd += ' )'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            self.handle.sendline( "packet = ether/ip/icmp" )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def sendPacket( self, iface=None, packet=None, timeout=1 ):
-        """
-        Send a packet with either the given scapy packet command, or use the
-        packet saved in the variable 'packet'.
-
-        Examples of a valid string for packet:
-
-        Simple IP packet
-        packet='Ether(dst="a6:d9:26:df:1d:4b")/IP(dst="10.0.0.2")'
-
-        A Ping with two vlan tags
-        packet='Ether(dst='ff:ff:ff:ff:ff:ff')/Dot1Q(vlan=1)/Dot1Q(vlan=10)/
-                IP(dst='255.255.255.255', src='192.168.0.1')/ICMP()'
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # TODO: add all params, or use kwargs
-            sendCmd = 'srp( '
-            if packet:
-                sendCmd += packet
-            else:
-                sendCmd += "packet"
-            if iface:
-                sendCmd += ", iface='{}'".format( iface )
-
-            sendCmd += ', timeout=' + str( timeout ) + ')'
-            self.handle.sendline( sendCmd )
-            self.handle.expect( self.scapyPrompt )
-            if "Traceback" in self.handle.before:
-                # KeyError, SyntaxError, ...
-                main.log.error( "Error in sending command: " + self.handle.before )
-                return main.FALSE
-            # TODO: Check # of packets sent?
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def startFilter( self, ifaceName=None, sniffCount=1, pktFilter="ip" ):
-        """
-        Listen for packets using the given filters
-
-        Options:
-        ifaceName - the name of the interface to listen on. If none is given,
-                    defaults to <host name>-eth0
-        pktFilter - A string in Berkeley Packet Filter (BPF) format which
-                    specifies which packets to sniff
-        sniffCount - The number of matching packets to capture before returning
-
-        Returns main.TRUE or main.FALSE on error
-        """
-        try:
-            # TODO: add all params, or use kwargs
-            ifaceName = str( ifaceName ) if ifaceName else self.name + "-eth0"
-            # Set interface
-            self.handle.sendline( ' conf.iface = "' + ifaceName + '"' )
-            self.handle.expect( self.scapyPrompt )
-            cmd = 'pkt = sniff(count = ' + str( sniffCount ) +\
-                  ', filter = "' + str( pktFilter ) + '")'
-            self.handle.sendline( cmd )
-            self.handle.expect( '"\)\r\n' )
-            # TODO: parse this?
-            return main.TRUE
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def checkFilter( self ):
-        """
-        Check that a filter returned and returns the reponse
-        """
-        try:
-            i = self.handle.expect( [ self.scapyPrompt, pexpect.TIMEOUT ] )
-            if i == 0:
-                return main.TRUE
-            else:
-                return main.FALSE
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def killFilter( self ):
-        """
-        Kill a scapy filter
-        """
-        try:
-            self.handle.send( "\x03" )  # Send a ctrl-c to kill the filter
-            self.handle.expect( self.scapyPrompt )
-            return self.handle.before
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return None
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def readPackets( self ):
-        """
-        Read all the packets captured by the previous filter
-        """
-        try:
-            self.handle.sendline( "for p in pkt: p \n")
-            self.handle.expect( "for p in pkt: p \r\n... \r\n" )
-            self.handle.expect( self.scapyPrompt )
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return None
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-        return self.handle.before
-
-    def updateSelf( self ):
-        """
-        Updates local MAC and IP fields
-        """
-        self.hostMac = self.getMac()
-        self.hostIp = self.getIp()
-
-    def getMac( self, ifaceName=None ):
-        """
-        Save host's MAC address
-        """
-        try:
-            ifaceName = str( ifaceName ) if ifaceName else self.name + "-eth0"
-            cmd = 'get_if_hwaddr("' + str( ifaceName ) + '")'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-            pattern = r'(([0-9a-f]{2}[:-]){5}([0-9a-f]{2}))'
-            match = re.search( pattern, self.handle.before )
-            if match:
-                return match.group()
-            else:
-                # the command will have an exception if iface doesn't exist
-                return None
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return None
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
-
-    def getIp( self, ifaceName=None ):
-        """
-        Save host's IP address
-        """
-        try:
-            ifaceName = ifaceName if ifaceName else self.name + "-eth0"
-            cmd = 'get_if_addr("' + str( ifaceName ) + '")'
-            self.handle.sendline( cmd )
-            self.handle.expect( self.scapyPrompt )
-
-            pattern = r'(((2[0-5]|1[0-9]|[0-9])?[0-9]\.){3}((2[0-5]|1[0-9]|[0-9])?[0-9]))'
-            match = re.search( pattern, self.handle.before )
-            if match:
-                # NOTE: The command will return 0.0.0.0 if the iface doesn't exist
-                return match.group()
-            else:
-                return None
-        except pexpect.TIMEOUT:
-            main.log.exception( self.name + ": Command timed out" )
-            return None
-        except pexpect.EOF:
-            main.log.exception( self.name + ": connection closed." )
-            main.cleanup()
-            main.exit()
-        except Exception:
-            main.log.exception( self.name + ": Uncaught exception!" )
-            main.cleanup()
-            main.exit()
 
 if __name__ != "__main__":
     sys.modules[ __name__ ] = MininetCliDriver()
