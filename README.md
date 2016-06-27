@@ -137,20 +137,20 @@ Here are a few things to check if it doesn't work
 
 Features
 -----------------------------------------------
-Some features in TestON are
+Some features in TestON are:
 
-    - Pause Function
+- Pause Function
 
-    - [Retry Function](TestON/Documentation/features/retry.md)
+- [Retry Function](TestON/Documentation/features/retry.md)
 
-    - Test suite hierarchy
+- Test suite hierarchy
 
-    - Test dependency folders
+- Test dependency folders
 
-    - 
+- 
 
-    - 
+- 
 
-    - 
+- 
 
-    - 
+- 
