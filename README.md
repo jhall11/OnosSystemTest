@@ -137,7 +137,7 @@ Here are a few things to check if it doesn't work
 
 Features
 -----------------------------------------------
-Some features in TestON are:
+Some features in TestON are
 
     - Pause Function
 
